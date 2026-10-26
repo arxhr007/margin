@@ -1,25 +1,37 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
+using Margin.Input;
 using Margin.Touchpad;
 
 namespace Margin;
 
-/// Owns the touchpad input and the tray icon.
+/// Owns everything: touchpad input, mouse hook, engine and the tray icon.
 internal sealed class TrayApp : ApplicationContext
 {
+    private readonly Settings settings = new();
     private readonly TouchTracker tracker = new();
+    private readonly Brightness brightness = new();
     private readonly RawTouchpad touchpad;
+    private readonly GestureEngine engine;
+    private readonly MouseHook hook;
     private readonly NotifyIcon tray;
     private readonly Icon icon;
+    private readonly ToolStripMenuItem enabledItem;
 
     public TrayApp()
     {
         touchpad = new RawTouchpad(tracker);
+        engine = new GestureEngine(tracker, brightness) { Settings = settings };
+        hook = new MouseHook(touchpad, engine);
 
         icon = MakeIcon();
+        enabledItem = new ToolStripMenuItem("On", null, (_, _) => settings.Enabled = !settings.Enabled);
         var menu = new ContextMenuStrip();
+        menu.Items.Add(enabledItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open log", null, (_, _) => Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { Log.FilePath } })?.Dispose());
         menu.Items.Add("Quit Margin", null, (_, _) => ExitThread());
+        menu.Opening += (_, _) => enabledItem.Checked = settings.Enabled;
 
         tray = new NotifyIcon { Icon = icon, Text = "Margin", ContextMenuStrip = menu, Visible = true };
 
@@ -57,7 +69,10 @@ internal sealed class TrayApp : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        engine.Reset();
+        hook.Dispose();
         touchpad.Dispose();
+        brightness.Dispose();
         tray.Visible = false;
         tray.Dispose();
         icon.Dispose();
