@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Margin;
 
@@ -46,5 +47,59 @@ public sealed class Settings
     {
         EdgeDepth = Math.Clamp(EdgeDepth, 0.05, 0.25);
         Sections ??= Defaults();
+    }
+}
+
+internal static class SettingsStore
+{
+    public static readonly JsonSerializerOptions Options = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+    };
+
+    public static string Directory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Margin");
+
+    public static string FilePath => Path.Combine(Directory, "settings.json");
+
+    public static bool Exists => File.Exists(FilePath);
+
+    public static Settings Load()
+    {
+        Settings settings;
+        try
+        {
+            settings = File.Exists(FilePath)
+                ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath), Options) ?? new Settings()
+                : new Settings();
+        }
+        catch (Exception e)
+        {
+            Log.Error($"settings.json unreadable, using defaults: {e.Message}");
+            settings = new Settings();
+        }
+        settings.Normalize();
+        return settings;
+    }
+
+    public static void Save(Settings settings)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(Directory);
+            var tmp = FilePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(settings, Options));
+            File.Move(tmp, FilePath, overwrite: true);
+        }
+        catch (Exception e)
+        {
+            Log.Error($"could not save settings: {e.Message}");
+        }
     }
 }

@@ -8,10 +8,7 @@ internal static class Log
     public static bool ToConsole { get; set; }
     public static bool Verbose { get; set; }
 
-    public static string Directory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Margin");
-
-    public static string FilePath => Path.Combine(Directory, "margin.log");
+    public static string FilePath => Path.Combine(SettingsStore.Directory, "margin.log");
 
     public static void Info(string message) => Write("info", message);
     public static void Error(string message) => Write("error", message);
@@ -29,7 +26,7 @@ internal static class Log
             if (ToConsole) Console.WriteLine(line);
             try
             {
-                System.IO.Directory.CreateDirectory(Directory);
+                System.IO.Directory.CreateDirectory(SettingsStore.Directory);
                 var info = new FileInfo(FilePath);
                 if (info.Exists && info.Length > 1_000_000) File.WriteAllText(FilePath, "");
                 File.AppendAllText(FilePath, line + Environment.NewLine);

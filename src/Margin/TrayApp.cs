@@ -8,7 +8,7 @@ namespace Margin;
 /// Owns everything: touchpad input, mouse hook, engine and the tray icon.
 internal sealed class TrayApp : ApplicationContext
 {
-    private readonly Settings settings = new();
+    private readonly Settings settings = SettingsStore.Load();
     private readonly TouchTracker tracker = new();
     private readonly Brightness brightness = new();
     private readonly RawTouchpad touchpad;
@@ -25,9 +25,14 @@ internal sealed class TrayApp : ApplicationContext
         hook = new MouseHook(touchpad, engine);
 
         icon = MakeIcon();
-        enabledItem = new ToolStripMenuItem("On", null, (_, _) => settings.Enabled = !settings.Enabled);
+        enabledItem = new ToolStripMenuItem("On", null, (_, _) =>
+        {
+            settings.Enabled = !settings.Enabled;
+            SettingsStore.Save(settings);
+        });
         var menu = new ContextMenuStrip();
         menu.Items.Add(enabledItem);
+        menu.Items.Add("Edit settings file…", null, (_, _) => Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { SettingsStore.FilePath } })?.Dispose());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open log", null, (_, _) => Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { Log.FilePath } })?.Dispose());
         menu.Items.Add("Quit Margin", null, (_, _) => ExitThread());
@@ -69,6 +74,7 @@ internal sealed class TrayApp : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        SettingsStore.Save(settings);
         engine.Reset();
         hook.Dispose();
         touchpad.Dispose();
