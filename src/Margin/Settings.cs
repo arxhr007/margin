@@ -7,7 +7,7 @@ namespace Margin;
 public enum Section { Left, Right, Top, Bottom }
 
 /// What sliding along an edge controls.
-public enum SlideAction { Off, Volume, Brightness, Seek }
+public enum SlideAction { Off, Volume, Brightness, Seek, Zoom, Tabs, Tracks, Desktops }
 
 public sealed class SectionSettings
 {

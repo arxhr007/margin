@@ -90,7 +90,9 @@ internal sealed class GestureEngine
         Perform(run.Action, delta);
     }
 
-    private float StepSize(SlideAction a) => 0.042f;
+    private float StepSize(SlideAction a) =>
+        // Discrete actions (tabs, tracks, desktops) get bigger steps so one swipe doesn't overshoot.
+        a is SlideAction.Tabs or SlideAction.Tracks or SlideAction.Desktops ? 0.105f : 0.042f;
 
     private void Perform(SlideAction action, int delta)
     {
@@ -106,6 +108,20 @@ internal sealed class GestureEngine
                 break;
             case SlideAction.Seek:
                 Post(() => SystemKeys.Tap(forward ? SystemKeys.Right : SystemKeys.Left, n));
+                break;
+            case SlideAction.Zoom:
+                Post(() => SystemKeys.CtrlWheel(forward ? n : -n));
+                break;
+            case SlideAction.Tabs:
+                Post(() => SystemKeys.Combo(SystemKeys.Tab,
+                    forward ? new[] { SystemKeys.Ctrl } : new[] { SystemKeys.Ctrl, SystemKeys.Shift }, n));
+                break;
+            case SlideAction.Tracks:
+                Post(() => SystemKeys.Tap(forward ? SystemKeys.MediaNext : SystemKeys.MediaPrev, n));
+                break;
+            case SlideAction.Desktops:
+                Post(() => SystemKeys.Combo(forward ? SystemKeys.Right : SystemKeys.Left,
+                    new[] { SystemKeys.Ctrl, SystemKeys.Win }, n));
                 break;
         }
     }
