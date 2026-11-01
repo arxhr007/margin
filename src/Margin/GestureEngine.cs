@@ -6,18 +6,33 @@ namespace Margin;
 
 /// Turns touchpad frames and clicks into edge actions.
 ///
-/// Rest a finger on an assigned edge, press the touchpad until it clicks, then slide while held.
-/// The click and the drag are hidden from apps. While a slide runs the pointer is frozen and
-/// travel along the edge is turned into steps.
+/// Two ways to start (user's choice):
+///   Press   — one finger rests in an assigned edge, the touchpad is physically clicked, then the finger
+///             slides while held. The click and the drag are hidden from apps.
+///   SlideIn — one finger first appears in the thin outer strip of an assigned edge (it came in from the
+///             laptop body), then moves mostly along the edge within a short window. No click needed.
+///             Fingers born anywhere else, or any multi-finger contact, are ignored until all fingers lift.
+/// While a slide runs the pointer is frozen and travel along the edge is turned into steps.
 internal sealed class GestureEngine
 {
+    private const long IntentWindowMs = 600;
+    private const float IntentTravel = 0.03f;
+
     private sealed class Run
     {
         public required Section Section;
         public required SlideAction Action;
         public required int FingerId;
         public required float Origin;
+        public required bool FromPress;
         public int Steps;
+    }
+
+    private sealed class Candidate
+    {
+        public required Section Section;
+        public required int FingerId;
+        public required long BornAt;
     }
 
     private readonly TouchTracker touches;
@@ -26,6 +41,8 @@ internal sealed class GestureEngine
     private readonly HashSet<int> ignoredFingers = new();
 
     private Run? run;
+    private Candidate? candidate;
+    private bool multiFingerSeen;
     private bool holdingClick;
 
     public Settings Settings { get; set; } = new();
@@ -53,19 +70,66 @@ internal sealed class GestureEngine
     private void OnFrame()
     {
         var fingers = touches.Snapshot();
-        if (fingers.Count == 0) ignoredFingers.Clear();
+        if (fingers.Count == 0)
+        {
+            multiFingerSeen = false;
+            ignoredFingers.Clear();
+            candidate = null;
+        }
+        else if (fingers.Count > 1)
+        {
+            multiFingerSeen = true;
+            candidate = null;
+        }
+
         if (run != null) Follow(fingers);
+        else if (Settings.Enabled && Settings.Activation == Activation.SlideIn) Watch(fingers);
     }
 
-    private void Start(Section s, TouchPoint f)
+    /// Slide-in mode: look for a finger that entered from outside and then moves along the edge.
+    private void Watch(IReadOnlyList<TouchPoint> fingers)
+    {
+        if (fingers.Count != 1 || multiFingerSeen) return;
+        var f = fingers[0];
+        if (ignoredFingers.Contains(f.Id)) return;
+        long now = Environment.TickCount64;
+
+        if (candidate == null || candidate.FingerId != f.Id)
+        {
+            // Judge each finger once, by where it first touched down.
+            if (Geometry.EntryEdge(f.Start, Settings) is { } edge)
+                candidate = new Candidate { Section = edge, FingerId = f.Id, BornAt = now };
+            else
+                ignoredFingers.Add(f.Id);
+            return;
+        }
+
+        var s = candidate.Section;
+        float along = Math.Abs(Geometry.Along(s, f.Current) - Geometry.Along(s, f.Start));
+        float inward = Math.Max(0, Geometry.Inward(s, f.Start, f.Current));
+        bool tooLate = now - candidate.BornAt > IntentWindowMs;
+        if (tooLate || !Geometry.InCorridor(s, f.Current, Settings) || (along >= IntentTravel && along < inward * 0.6f))
+        {
+            ignoredFingers.Add(f.Id); // wandered inward, went diagonal, or hesitated: it's normal pointer use
+            candidate = null;
+            return;
+        }
+        if (along >= IntentTravel)
+        {
+            candidate = null;
+            Start(s, f, fromPress: false);
+        }
+    }
+
+    private void Start(Section s, TouchPoint f, bool fromPress)
     {
         run = new Run
         {
             Section = s, Action = Settings[s].Slide, FingerId = f.Id,
-            Origin = Geometry.Along(s, f.Current),
+            Origin = Geometry.Along(s, f.Current), FromPress = fromPress,
         };
         if (run.Action == SlideAction.Brightness) brightness.Refresh();
-        Log.Debug($"slide start {s} -> {run.Action}");
+        Log.Debug($"slide start {s} -> {run.Action} ({(fromPress ? "press" : "slide-in")})");
     }
 
     private void Follow(IReadOnlyList<TouchPoint> fingers)
@@ -160,8 +224,9 @@ internal sealed class GestureEngine
         if (ignoredFingers.Contains(f.Id)) return false;
         if (Geometry.Hit(f.Start, Settings) is not { } s || Geometry.Hit(f.Current, Settings) != s) return false;
         if (!Geometry.IsAssigned(s, Settings)) return false;
+        if (Settings.Activation != Activation.Press) return false;
 
-        Start(s, f);
+        Start(s, f, fromPress: true);
         holdingClick = true;
         return true;
     }
@@ -170,12 +235,13 @@ internal sealed class GestureEngine
     {
         if (!holdingClick) return;
         holdingClick = false;
-        Stop();
+        if (run is { FromPress: true }) Stop();
     }
 
     public void Reset()
     {
         Stop();
+        candidate = null;
         holdingClick = false;
     }
 }

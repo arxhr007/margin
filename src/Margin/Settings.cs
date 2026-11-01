@@ -9,6 +9,15 @@ public enum Section { Left, Right, Top, Bottom }
 /// What sliding along an edge controls.
 public enum SlideAction { Off, Volume, Brightness, Seek, Zoom, Tabs, Tracks, Desktops }
 
+/// How an edge slide begins.
+public enum Activation
+{
+    /// Press the edge until the touchpad clicks, then slide while holding.
+    Press,
+    /// Slide a finger in from the laptop body onto the edge, then along it. No click.
+    SlideIn,
+}
+
 public sealed class SectionSettings
 {
     /// Used by the four edges.
@@ -18,8 +27,11 @@ public sealed class SectionSettings
 public sealed class Settings
 {
     public bool Enabled { get; set; } = true;
+    public Activation Activation { get; set; } = Activation.Press;
     /// Depth of the edge strips, as a fraction of the touchpad.
     public double EdgeDepth { get; set; } = 0.10;
+    /// Slide-in mode: a finger must first appear this close to the edge.
+    public double EntryStrip { get; set; } = 0.04;
 
     public Dictionary<string, SectionSettings> Sections { get; set; } = Defaults();
 
@@ -46,6 +58,7 @@ public sealed class Settings
     public void Normalize()
     {
         EdgeDepth = Math.Clamp(EdgeDepth, 0.05, 0.25);
+        EntryStrip = Math.Clamp(EntryStrip, 0.01, 0.10);
         Sections ??= Defaults();
     }
 }

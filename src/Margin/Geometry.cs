@@ -38,6 +38,18 @@ internal static class Geometry
 
     public static bool IsAssigned(Section s, Settings st) => st[s].Slide != SlideAction.Off;
 
+    /// Slide-in mode: the assigned edge whose thin outer strip contains a newborn finger.
+    public static Section? EntryEdge(PointF p, Settings st)
+    {
+        float e = (float)st.EntryStrip;
+        Section? s = null;
+        if (p.X <= e) s = Section.Left;
+        else if (p.X >= 1 - e) s = Section.Right;
+        else if (p.Y <= e) s = Section.Bottom;
+        else if (p.Y >= 1 - e) s = Section.Top;
+        return s is { } edge && IsAssigned(edge, st) ? edge : null;
+    }
+
     /// How far from its edge a finger may drift before an active slide ends.
     public static bool InCorridor(Section s, PointF p, Settings st)
     {
