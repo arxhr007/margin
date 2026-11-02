@@ -36,6 +36,7 @@ internal sealed class GestureEngine
     }
 
     private readonly TouchTracker touches;
+    private readonly Hud hud;
     private readonly Brightness brightness;
     private readonly SynchronizationContext ui;
     private readonly HashSet<int> ignoredFingers = new();
@@ -50,9 +51,10 @@ internal sealed class GestureEngine
     /// While true the mouse hook drops pointer movement.
     public bool FreezePointer => run != null;
 
-    public GestureEngine(TouchTracker touches, Brightness brightness)
+    public GestureEngine(TouchTracker touches, Hud hud, Brightness brightness)
     {
         this.touches = touches;
+        this.hud = hud;
         this.brightness = brightness;
         ui = SynchronizationContext.Current ?? throw new InvalidOperationException("create on the UI thread");
         touches.Frame += OnFrame;
@@ -151,14 +153,14 @@ internal sealed class GestureEngine
         int delta = target - run.Steps;
         if (delta == 0) return;
         run.Steps = target;
-        Perform(run.Action, delta);
+        Perform(run.Action, delta, target);
     }
 
     private float StepSize(SlideAction a) =>
         // Discrete actions (tabs, tracks, desktops) get bigger steps so one swipe doesn't overshoot.
         a is SlideAction.Tabs or SlideAction.Tracks or SlideAction.Desktops ? 0.105f : 0.042f;
 
-    private void Perform(SlideAction action, int delta)
+    private void Perform(SlideAction action, int delta, int total)
     {
         int n = Math.Abs(delta);
         bool forward = delta > 0;
@@ -168,10 +170,20 @@ internal sealed class GestureEngine
                 Post(() => SystemKeys.Tap(forward ? SystemKeys.VolumeUp : SystemKeys.VolumeDown, n * 2));
                 break;
             case SlideAction.Brightness:
-                Post(() => brightness.Nudge(delta * 5));
+                int change = delta * 5;
+                Post(() =>
+                {
+                    int value = brightness.Nudge(change);
+                    if (value >= 0) hud.ShowLevel($"Brightness  {value}%", value);
+                    else hud.ShowText("Brightness not available");
+                });
                 break;
             case SlideAction.Seek:
-                Post(() => SystemKeys.Tap(forward ? SystemKeys.Right : SystemKeys.Left, n));
+                Post(() =>
+                {
+                    SystemKeys.Tap(forward ? SystemKeys.Right : SystemKeys.Left, n);
+                    hud.ShowText(total >= 0 ? $"⏩  +{total * 5}s" : $"⏪  −{-total * 5}s");
+                });
                 break;
             case SlideAction.Zoom:
                 Post(() => SystemKeys.CtrlWheel(forward ? n : -n));
@@ -193,8 +205,10 @@ internal sealed class GestureEngine
     private void Stop()
     {
         if (run == null) return;
+        var action = run.Action;
         Log.Debug($"slide end {run.Section} after {run.Steps} steps");
         run = null;
+        if (action is SlideAction.Brightness or SlideAction.Seek) Post(() => hud.HideAfter(700));
     }
 
     // ---------------- clicks (from the mouse hook) ----------------

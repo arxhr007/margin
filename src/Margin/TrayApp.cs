@@ -10,6 +10,7 @@ internal sealed class TrayApp : ApplicationContext
 {
     private readonly Settings settings = SettingsStore.Load();
     private readonly TouchTracker tracker = new();
+    private readonly Hud hud = new();
     private readonly Brightness brightness = new();
     private readonly RawTouchpad touchpad;
     private readonly GestureEngine engine;
@@ -21,7 +22,7 @@ internal sealed class TrayApp : ApplicationContext
     public TrayApp()
     {
         touchpad = new RawTouchpad(tracker);
-        engine = new GestureEngine(tracker, brightness) { Settings = settings };
+        engine = new GestureEngine(tracker, hud, brightness) { Settings = settings };
         hook = new MouseHook(touchpad, engine);
 
         icon = MakeIcon();
@@ -82,6 +83,7 @@ internal sealed class TrayApp : ApplicationContext
         tray.Visible = false;
         tray.Dispose();
         icon.Dispose();
+        hud.Dispose();
         Log.Info("Margin quit");
         base.ExitThreadCore();
     }
