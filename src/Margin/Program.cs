@@ -6,10 +6,19 @@ internal static class Program
     private static int Main()
     {
         using var mutex = new Mutex(true, @"Local\Margin.TouchpadEdges", out bool first);
-        if (!first) return 0;
+        using var showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Margin.ShowSettings");
+        if (!first)
+        {
+            // Already running: ask that copy to open its settings window, then leave.
+            showSignal.Set();
+            return 0;
+        }
 
+        bool firstRun = !SettingsStore.Exists;
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayApp());
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => Log.Error($"unhandled: {e.Exception}");
+        Application.Run(new TrayApp(firstRun, showSignal));
         return 0;
     }
 }

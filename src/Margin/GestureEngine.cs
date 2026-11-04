@@ -156,9 +156,12 @@ internal sealed class GestureEngine
         Perform(run.Action, delta, target);
     }
 
-    private float StepSize(SlideAction a) =>
+    private float StepSize(SlideAction a)
+    {
+        float baseStep = Settings.Speed switch { Speed.Slow => 0.06f, Speed.Fast => 0.03f, _ => 0.042f };
         // Discrete actions (tabs, tracks, desktops) get bigger steps so one swipe doesn't overshoot.
-        a is SlideAction.Tabs or SlideAction.Tracks or SlideAction.Desktops ? 0.105f : 0.042f;
+        return a is SlideAction.Tabs or SlideAction.Tracks or SlideAction.Desktops ? baseStep * 2.5f : baseStep;
+    }
 
     private void Perform(SlideAction action, int delta, int total)
     {

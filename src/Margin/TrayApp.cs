@@ -2,10 +2,11 @@ using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using Margin.Input;
 using Margin.Touchpad;
+using Margin.UI;
 
 namespace Margin;
 
-/// Owns everything: touchpad input, mouse hook, engine and the tray icon.
+/// Owns everything: touchpad input, mouse hook, engine, tray icon and the settings window.
 internal sealed class TrayApp : ApplicationContext
 {
     private readonly Settings settings = SettingsStore.Load();
@@ -18,30 +19,57 @@ internal sealed class TrayApp : ApplicationContext
     private readonly NotifyIcon tray;
     private readonly Icon icon;
     private readonly ToolStripMenuItem enabledItem;
+    private readonly System.Windows.Forms.Timer saveTimer = new() { Interval = 400 };
+    private SettingsForm? window;
 
-    public TrayApp()
+    public TrayApp(bool firstRun, EventWaitHandle showSignal)
     {
+        // Launching Margin a second time opens this copy's settings.
+        ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => hud.BeginInvoke(ShowSettings), null, Timeout.Infinite, executeOnlyOnce: false);
         touchpad = new RawTouchpad(tracker);
         engine = new GestureEngine(tracker, hud, brightness) { Settings = settings };
         hook = new MouseHook(touchpad, engine);
+        saveTimer.Tick += (_, _) => { saveTimer.Stop(); SettingsStore.Save(settings); };
 
         icon = MakeIcon();
-        enabledItem = new ToolStripMenuItem("On", null, (_, _) =>
-        {
-            settings.Enabled = !settings.Enabled;
-            SettingsStore.Save(settings);
-        });
+        enabledItem = new ToolStripMenuItem("On", null, (_, _) => { settings.Enabled = !settings.Enabled; SettingsChanged(); });
         var menu = new ContextMenuStrip();
+        menu.Items.Add(new ToolStripMenuItem("Settings…", null, (_, _) => ShowSettings()) { Font = new Font(menu.Font, FontStyle.Bold) });
         menu.Items.Add(enabledItem);
-        menu.Items.Add("Edit settings file…", null, (_, _) => Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { SettingsStore.FilePath } })?.Dispose());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open log", null, (_, _) => Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { Log.FilePath } })?.Dispose());
         menu.Items.Add("Quit Margin", null, (_, _) => ExitThread());
         menu.Opening += (_, _) => enabledItem.Checked = settings.Enabled;
 
         tray = new NotifyIcon { Icon = icon, Text = "Margin", ContextMenuStrip = menu, Visible = true };
+        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
 
         Log.Info($"Margin {Application.ProductVersion} started");
+        if (firstRun)
+        {
+            SettingsStore.Save(settings);
+            ShowSettings();
+        }
+    }
+
+    private void SettingsChanged()
+    {
+        engine.Reset();
+        tray.Text = settings.Enabled ? "Margin" : "Margin (off)";
+        saveTimer.Stop();
+        saveTimer.Start();
+    }
+
+    private void ShowSettings()
+    {
+        if (window == null || window.IsDisposed)
+        {
+            window = new SettingsForm(settings, tracker, icon, SettingsChanged);
+            window.FormClosed += (_, _) => window = null;
+            window.Show();
+        }
+        if (window.WindowState == FormWindowState.Minimized) window.WindowState = FormWindowState.Normal;
+        window.Activate();
     }
 
     /// A touchpad outline with highlighted edges.
@@ -75,7 +103,8 @@ internal sealed class TrayApp : ApplicationContext
 
     protected override void ExitThreadCore()
     {
-        SettingsStore.Save(settings);
+        if (saveTimer.Enabled) SettingsStore.Save(settings);
+        window?.Close();
         engine.Reset();
         hook.Dispose();
         touchpad.Dispose();

@@ -18,6 +18,8 @@ public enum Activation
     SlideIn,
 }
 
+public enum Speed { Slow, Medium, Fast }
+
 public sealed class SectionSettings
 {
     /// Used by the four edges.
@@ -28,6 +30,7 @@ public sealed class Settings
 {
     public bool Enabled { get; set; } = true;
     public Activation Activation { get; set; } = Activation.Press;
+    public Speed Speed { get; set; } = Speed.Medium;
     /// Depth of the edge strips, as a fraction of the touchpad.
     public double EdgeDepth { get; set; } = 0.10;
     /// Slide-in mode: a finger must first appear this close to the edge.
