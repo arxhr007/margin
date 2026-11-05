@@ -3,6 +3,7 @@ using System.Drawing.Drawing2D;
 using Margin.Input;
 using Margin.Touchpad;
 using Margin.UI;
+using Microsoft.Win32;
 
 namespace Margin;
 
@@ -44,6 +45,9 @@ internal sealed class TrayApp : ApplicationContext
         tray = new NotifyIcon { Icon = icon, Text = "Margin", ContextMenuStrip = menu, Visible = true };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
 
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
+
         Log.Info($"Margin {Application.ProductVersion} started");
         if (firstRun)
         {
@@ -71,6 +75,26 @@ internal sealed class TrayApp : ApplicationContext
         if (window.WindowState == FormWindowState.Minimized) window.WindowState = FormWindowState.Normal;
         window.Activate();
     }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Resume) Rearm("resume");
+    }
+
+    private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.ConsoleConnect) Rearm("unlock");
+    }
+
+    /// The hook and raw input registration can be dropped across sleep or the lock screen.
+    private void Rearm(string why) => hud.BeginInvoke(() =>
+    {
+        Log.Info($"re-arming input after {why}");
+        engine.Reset();
+        tracker.Clear();
+        touchpad.Register();
+        hook.Install();
+    });
 
     /// A touchpad outline with highlighted edges.
     private static Icon MakeIcon()
@@ -103,6 +127,8 @@ internal sealed class TrayApp : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
         if (saveTimer.Enabled) SettingsStore.Save(settings);
         window?.Close();
         engine.Reset();

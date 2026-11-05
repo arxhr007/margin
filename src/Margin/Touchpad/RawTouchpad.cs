@@ -47,6 +47,7 @@ internal sealed class RawTouchpad : NativeWindow, IDisposable
     private IntPtr buffer = IntPtr.Zero;
     private uint bufferSize;
     private IntPtr activeDevice = IntPtr.Zero;
+    private long lastDiag;
 
     public RawTouchpad(TouchTracker tracker)
     {
@@ -178,7 +179,18 @@ internal sealed class RawTouchpad : NativeWindow, IDisposable
             d.Expected = 0;
             activeDevice = d.Down.Count > 0 ? hDevice : IntPtr.Zero;
             tracker.Commit(d.Down, d.Button);
+            LogFrame();
         }
+    }
+
+    private void LogFrame()
+    {
+        if (!Log.Verbose) return;
+        long now = Environment.TickCount64;
+        if (now - lastDiag < 60 && !tracker.ButtonDown) return;
+        lastDiag = now;
+        var parts = tracker.Snapshot().Select(t => $"#{t.Id} ({t.Current.X:0.00},{t.Current.Y:0.00}) from ({t.Start.X:0.00},{t.Start.Y:0.00})");
+        Log.Debug($"frame btn={(tracker.ButtonDown ? 1 : 0)} n={tracker.Count} {string.Join(" ", parts)}");
     }
 
     private Device? GetDevice(IntPtr hDevice)

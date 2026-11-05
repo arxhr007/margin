@@ -44,9 +44,10 @@ internal sealed class SettingsForm : Form
         var speed = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
         speed.Items.AddRange(new object[] { "Slow", "Medium", "Fast" });
         speed.SelectedIndex = (int)settings.Speed;
+        var startup = new CheckBox { Text = "Start with Windows", AutoSize = true, Checked = Startup.Enabled, Margin = new Padding(18, 6, 0, 0) };
         header.Controls.AddRange(new Control[]
         {
-            enabled, Caption("Start a slide by:"), activation, Caption("Speed:"), speed,
+            enabled, Caption("Start a slide by:"), activation, Caption("Speed:"), speed, startup,
         });
         root.Controls.Add(header, 0, 0);
         root.SetColumnSpan(header, 2);
@@ -89,6 +90,7 @@ internal sealed class SettingsForm : Form
             ShowSection(pad.Selected); // refresh the how-to text
         };
         speed.SelectedIndexChanged += (_, _) => { settings.Speed = (Speed)speed.SelectedIndex; Changed(); };
+        startup.CheckedChanged += (_, _) => Startup.Enabled = startup.Checked;
         edgeSize.ValueChanged += (_, _) => { settings.EdgeDepth = edgeSize.Value / 100.0; Changed(); };
 
         ResumeLayout(false);
@@ -155,5 +157,27 @@ internal sealed class SettingsForm : Form
         if (bold) l.Font = new Font(SystemFonts.MessageBoxFont ?? l.Font, FontStyle.Bold);
         if (gray) l.ForeColor = SystemColors.GrayText;
         return l;
+    }
+}
+
+/// "Start with Windows" via the per-user Run key.
+internal static class Startup
+{
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string Name = "Margin";
+
+    public static bool Enabled
+    {
+        get
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey);
+            return key?.GetValue(Name) is string;
+        }
+        set
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey);
+            if (value) key.SetValue(Name, $"\"{Environment.ProcessPath}\"");
+            else key.DeleteValue(Name, throwOnMissingValue: false);
+        }
     }
 }
