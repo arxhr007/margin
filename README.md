@@ -36,7 +36,7 @@ Everything in the middle of the touchpad stays a normal touchpad. Margin is one 
 irm https://raw.githubusercontent.com/arxhr007/margin/main/scripts/install.ps1 | iex
 ```
 
-**Linux** (any distribution with systemd, x86_64 or arm64). Run in a terminal:
+**Linux** (64-bit Intel/AMD, any distribution with systemd). Run in a terminal:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/arxhr007/margin/main/scripts/install.sh | sh
@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/arxhr007/margin/main/scripts/instal
 
 It installs `~/.local/bin/margin`, does one `sudo` step for the permissions described under [Linux](#linux), and sets up a systemd user service that starts with your desktop session.
 
-**Manual download.** Every [release](../../releases) has `margin.exe` (Windows) and `margin-linux-x86_64` / `margin-linux-aarch64` (Linux, static, no dependencies), each with a `.sha256` file.
+**Manual download.** Every [release](../../releases) has `margin.exe` (Windows) and `margin-linux-x86_64` (Linux, static, no dependencies), each with a `.sha256` file. There is no prebuilt Linux arm64 binary yet; on arm64, build from source.
 
 **Build from source** (needs the [Rust toolchain](https://rustup.rs); on Windows also the "Desktop development with C++" build tools):
 
@@ -339,7 +339,7 @@ Everything runs on one thread per program (Windows: one message loop; Linux: one
 | `touchpad/raw.rs`, `hook.rs`, `brightness.rs`, `hud.rs`, `tray.rs`, `ui/`, `app.rs`, ... | Windows: Raw Input, mouse hook, WMI, on-screen display, tray, settings window |
 | `linux/` | Linux: device discovery, daemon loop, uinput output, corner actions, settings web server and page |
 
-`build.rs` embeds the Windows manifest (per-monitor DPI, visual styles), version info and an icon generated from the same drawing code the tray uses. A [GitHub Actions workflow](.github/workflows/build.yml) tests on Linux and Windows and builds the release binaries when a `v*` tag is pushed.
+`build.rs` embeds the Windows manifest (per-monitor DPI, visual styles), version info and an icon generated from the same drawing code the tray uses. A [GitHub Actions workflow](.github/workflows/build.yml) tests on Linux and Windows and builds the release binaries (including Linux arm64) when a `v*` tag is pushed.
 
 Versions up to 0.2.1 were written in C# on .NET 8. That code is still in the git history and in the [v0.2.1 tag](../../tree/v0.2.1); the Rust version reads and writes the same `settings.json`.
 

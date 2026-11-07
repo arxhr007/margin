@@ -71,7 +71,7 @@ fi
 case "$(uname -m)" in
   x86_64|amd64) ARCH="x86_64" ;;
   aarch64|arm64) ARCH="aarch64" ;;
-  *) die "unsupported CPU: $(uname -m) (Margin ships x86_64 and aarch64 builds)" ;;
+  *) die "unsupported CPU: $(uname -m) (prebuilt binaries are for x86_64 and aarch64; build from source with cargo)" ;;
 esac
 ASSET="margin-linux-$ARCH"
 

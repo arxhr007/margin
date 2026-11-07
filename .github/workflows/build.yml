@@ -1,12 +1,89 @@
 name: build
 
+# Runs when a release tag (v*) is pushed, or by hand from the Actions tab.
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
+# "contents: write" lets the release job attach the binaries to a GitHub release.
+permissions:
+  contents: write
+
 jobs:
-  hello:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked
+
+  windows:
+    name: build (windows x86_64)
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release --locked
+      - name: package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target\release\margin.exe dist\margin.exe
+          $hash = (Get-FileHash dist\margin.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("dist/margin.exe.sha256", "$hash  margin.exe`n")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    name: build (linux ${{ matrix.arch }})
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    # the arm64 runner is newer; if it is unavailable the x86_64 release still goes out
+    continue-on-error: ${{ matrix.arch == 'aarch64' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: build a static binary (musl), so it runs on any distribution
+        run: |
+          rustup target add ${{ matrix.arch }}-unknown-linux-musl
+          cargo build --release --locked --target ${{ matrix.arch }}-unknown-linux-musl
+      - name: package
+        run: |
+          mkdir dist
+          cp target/${{ matrix.arch }}-unknown-linux-musl/release/margin dist/margin-linux-${{ matrix.arch }}
+          cd dist && sha256sum margin-linux-${{ matrix.arch }} > margin-linux-${{ matrix.arch }}.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+
+  release:
+    name: attach to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
     runs-on: ubuntu-latest
     steps:
-      - run: echo hello
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: create the release if needed, then upload the binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Margin $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
