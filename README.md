@@ -62,7 +62,7 @@ cargo build --release
 
 The program is `target\release\margin.exe`. Copy it anywhere and run it.
 
-Prebuilt downloads, when published, are on the [Releases](../../releases) page. Releases up to v0.2.1 are the earlier C# build of Margin; they work the same way and use the same settings file.
+**Download:** grab `margin.exe` from the [Releases](../../releases) page. v0.3.0 and later are this Rust build; v0.2.x are the earlier C# build, which works the same way and uses the same settings file.
 
 **First run.** The settings window opens. Afterwards Margin lives in the notification area: left-click its icon for settings, right-click for *Settings, On/Off, Open log, Quit*. Launching `margin.exe` again opens the settings of the copy that is already running. Tick **Start with Windows** to launch it at sign-in.
 
