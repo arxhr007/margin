@@ -1,3 +1,4 @@
+using Margin.Input;
 using Margin.Touchpad;
 
 namespace Margin.UI;
@@ -142,8 +143,16 @@ internal sealed class SettingsForm : Form
         var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = width, Margin = new Padding(0, 4, 0, 12) };
         foreach (var a in Enum.GetValues<SlideAction>()) combo.Items.Add(Labels.Long(a));
         combo.SelectedIndex = (int)v.Slide;
-        combo.SelectedIndexChanged += (_, _) => { v.Slide = (SlideAction)combo.SelectedIndex; Changed(); };
+        combo.SelectedIndexChanged += (_, _) =>
+        {
+            v.Slide = (SlideAction)combo.SelectedIndex;
+            if (v.Slide == SlideAction.Custom && string.IsNullOrWhiteSpace(v.Forward) && string.IsNullOrWhiteSpace(v.Back))
+                (v.Forward, v.Back, v.HoldModifiers) = ("Ctrl+Tab", "Ctrl+Shift+Tab", false);
+            Changed();
+            BeginInvoke(() => ShowSection(s)); // rebuild so the key fields appear or disappear
+        };
         detail.Controls.Add(combo);
+        if (v.Slide == SlideAction.Custom) BuildCustomKeys(v, s, width);
 
         var direction = s.IsVertical()
             ? "Slide up for more / next, down for less / previous."
@@ -153,6 +162,82 @@ internal sealed class SettingsForm : Form
             : "Bring your finger in from the laptop body onto this edge, then slide along it. No click needed.";
         detail.Controls.Add(Para(direction, width));
         detail.Controls.Add(Para(how, width, gray: true));
+    }
+
+    private static readonly (string Name, string Forward, string Back, bool Hold)[] KeyPresets =
+    {
+        ("Alt+Tab: switch windows", "Alt+Tab", "Alt+Shift+Tab", true),
+        ("Ctrl+Tab: switch browser tabs", "Ctrl+Tab", "Ctrl+Shift+Tab", false),
+        ("Ctrl+PageDown / PageUp: next / previous tab", "Ctrl+PageDown", "Ctrl+PageUp", false),
+        ("Page Up / Page Down: scroll", "PageUp", "PageDown", false),
+        ("Right / Left arrow", "Right", "Left", false),
+        ("Ctrl+Y / Ctrl+Z: redo / undo", "Ctrl+Y", "Ctrl+Z", false),
+    };
+
+    /// Lets the user choose which shortcut each slide direction sends.
+    private void BuildCustomKeys(SectionSettings v, Section s, int width)
+    {
+        var (fwdName, backName) = s.IsVertical() ? ("Slide up", "Slide down") : ("Slide right", "Slide left");
+
+        detail.Controls.Add(Para("Preset:", width, margin: new Padding(0, 4, 0, 2)));
+        var presets = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = width, Margin = new Padding(0, 0, 0, 8) };
+        presets.Items.Add("Choose a preset…");
+        foreach (var p in KeyPresets) presets.Items.Add(p.Name);
+        presets.SelectedIndex = 0;
+        presets.SelectedIndexChanged += (_, _) =>
+        {
+            if (presets.SelectedIndex <= 0) return;
+            var p = KeyPresets[presets.SelectedIndex - 1];
+            (v.Forward, v.Back, v.HoldModifiers) = (p.Forward, p.Back, p.Hold);
+            Changed();
+            BeginInvoke(() => ShowSection(s));
+        };
+        detail.Controls.Add(presets);
+
+        AddKeyRow($"{fwdName} presses:", v.Forward, text => v.Forward = text, width);
+        AddKeyRow($"{backName} presses:", v.Back, text => v.Back = text, width);
+
+        var hold = new CheckBox
+        {
+            Text = "Hold shared modifiers while sliding",
+            AutoSize = true,
+            Checked = v.HoldModifiers,
+            Margin = new Padding(0, 6, 0, 6),
+        };
+        hold.CheckedChanged += (_, _) => { v.HoldModifiers = hold.Checked; Changed(); };
+        detail.Controls.Add(hold);
+
+        detail.Controls.Add(Para(
+            "Click Record, then press the keys. Windows keeps a few combos (Alt+Tab, Win+…) to itself, so type those instead, " +
+            "like Alt+Tab or Win+Ctrl+Right. Each step of the slide presses the shortcut once. " +
+            "\"Hold shared modifiers\" keeps Alt down until you lift your finger, like holding Alt while pressing Tab.", width, gray: true));
+    }
+
+    private void AddKeyRow(string caption, string? current, Action<string?> save, int width)
+    {
+        detail.Controls.Add(Para(caption, width, margin: new Padding(0, 6, 0, 2)));
+        var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        var box = new ShortcutBox { Width = width - LogicalToDeviceUnits(84), Text = current ?? "" };
+        var record = new Button { Text = "Record", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(6, 0, 0, 0) };
+        row.Controls.Add(box);
+        row.Controls.Add(record);
+
+        void Validate()
+        {
+            bool bad = box.Text.Length > 0 && !ActionRunner.TryParseShortcut(box.Text, out _, out _);
+            box.BackColor = bad ? Color.FromArgb(255, 228, 228) : SystemColors.Window;
+        }
+
+        box.TextChanged += (_, _) =>
+        {
+            save(box.Text.Length > 0 ? box.Text : null);
+            Validate();
+            Changed();
+        };
+        record.Click += (_, _) => { record.Text = "Press keys…"; box.BeginRecording(); };
+        box.RecordingEnded += (_, _) => record.Text = "Record";
+        Validate();
+        detail.Controls.Add(row);
     }
 
     private void BuildCorner(Section s, int width)
@@ -235,6 +320,60 @@ internal sealed class SettingsForm : Form
         if (bold) l.Font = new Font(SystemFonts.MessageBoxFont ?? l.Font, FontStyle.Bold);
         if (gray) l.ForeColor = SystemColors.GrayText;
         return l;
+    }
+}
+
+/// A text box that can also record a shortcut: click Record, press the keys, and it fills in e.g. "Ctrl+Shift+Tab".
+internal sealed class ShortcutBox : TextBox
+{
+    private bool recording;
+
+    public event EventHandler? RecordingEnded;
+
+    public void BeginRecording()
+    {
+        recording = true;
+        Focus();
+    }
+
+    private void EndRecording()
+    {
+        if (!recording) return;
+        recording = false;
+        RecordingEnded?.Invoke(this, EventArgs.Empty);
+    }
+
+    protected override void OnLostFocus(EventArgs e)
+    {
+        EndRecording();
+        base.OnLostFocus(e);
+    }
+
+    protected override bool IsInputKey(Keys keyData) => recording || base.IsInputKey(keyData);
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (!recording) return base.ProcessCmdKey(ref msg, keyData);
+
+        var key = keyData & Keys.KeyCode;
+        if (key is Keys.ControlKey or Keys.ShiftKey or Keys.Menu or Keys.LWin or Keys.RWin) return true; // wait for the real key
+        if (KeyMap.Name(key) is not { } name) return true; // not bindable: keep waiting
+
+        var parts = new List<string>();
+        if ((keyData & Keys.Control) != 0) parts.Add("Ctrl");
+        if ((keyData & Keys.Alt) != 0) parts.Add("Alt");
+        if ((keyData & Keys.Shift) != 0) parts.Add("Shift");
+        if ((Native.GetAsyncKeyState(0x5B) & 0x8000) != 0 || (Native.GetAsyncKeyState(0x5C) & 0x8000) != 0) parts.Add("Win");
+        parts.Add(name switch
+        {
+            "pageup" => "PageUp", "pagedown" => "PageDown", "printscreen" => "PrintScreen", "volumeup" => "VolumeUp",
+            "volumedown" => "VolumeDown", "playpause" => "PlayPause", "nexttrack" => "NextTrack", "prevtrack" => "PrevTrack",
+            _ when name.Length == 1 => name.ToUpperInvariant(),
+            _ => char.ToUpperInvariant(name[0]) + name[1..],
+        });
+        Text = string.Join("+", parts);
+        EndRecording();
+        return true;
     }
 }
 

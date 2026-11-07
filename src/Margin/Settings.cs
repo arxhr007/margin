@@ -7,7 +7,7 @@ namespace Margin;
 public enum Section { Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, BottomRight }
 
 /// What sliding along an edge controls.
-public enum SlideAction { Off, Volume, Brightness, Seek, Zoom, Tabs, Tracks, Desktops }
+public enum SlideAction { Off, Volume, Brightness, Seek, Zoom, Tabs, Tracks, Desktops, Custom }
 
 /// What clicking a corner does.
 public enum ClickAction
@@ -38,6 +38,12 @@ public sealed class SectionSettings
 {
     /// Used by the four edges.
     public SlideAction Slide { get; set; }
+    /// Custom keys: shortcut sent per step when sliding right / up ("Alt+Tab", "Ctrl+PageDown", ...).
+    public string? Forward { get; set; }
+    /// Custom keys: shortcut sent per step when sliding left / down.
+    public string? Back { get; set; }
+    /// Custom keys: keep the modifiers both shortcuts share (e.g. Alt) held for the whole slide, like Alt+Tab.
+    public bool HoldModifiers { get; set; }
     /// Used by the four corners: index 0 = single click, 1 = double, 2 = triple.
     public List<ClickSpec> Clicks { get; set; } = new();
 }

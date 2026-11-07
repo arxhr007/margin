@@ -8,7 +8,7 @@ internal static class SystemKeys
     public const ushort VolumeMute = 0xAD, VolumeDown = 0xAE, VolumeUp = 0xAF;
     public const ushort MediaPlayPause = 0xB3, MediaNext = 0xB0, MediaPrev = 0xB1;
     public const ushort Left = 0x25, Right = 0x27, Tab = 0x09;
-    public const ushort Ctrl = 0xA2, Shift = 0xA0, Win = 0x5B;
+    public const ushort Ctrl = 0xA2, Shift = 0xA0, Win = 0x5B, Alt = 0xA4;
 
     /// Ctrl + mouse wheel, which zooms in browsers, Office, Explorer and most viewers.
     public static void CtrlWheel(int notches)
@@ -39,6 +39,14 @@ internal static class SystemKeys
         0xA3, 0xA5,                                     // right ctrl / alt
         0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3,       // volume + media
     };
+
+    /// Presses or releases a single key and leaves it that way (used to hold Alt through an Alt+Tab slide).
+    public static void Hold(ushort vk, bool up)
+    {
+        var array = new[] { Key(vk, up) };
+        if (Native.SendInput(1, array, Marshal.SizeOf<Native.INPUT>()) != 1)
+            Log.Error($"SendInput failed: {Marshal.GetLastWin32Error()}");
+    }
 
     public static void Tap(ushort vk, int times = 1) => Combo(vk, Array.Empty<ushort>(), times);
 
@@ -102,6 +110,28 @@ internal static class KeyMap
         };
         foreach (var (k, v) in named) d[k] = v;
         return d;
+    }
+
+    /// The name Code() understands for a WinForms key, or null when the key can't be bound.
+    public static string? Name(Keys key)
+    {
+        if (key >= Keys.A && key <= Keys.Z) return key.ToString().ToLowerInvariant();
+        if (key >= Keys.D0 && key <= Keys.D9) return ((char)('0' + (key - Keys.D0))).ToString();
+        if (key >= Keys.F1 && key <= Keys.F24) return "f" + (key - Keys.F1 + 1);
+        return key switch
+        {
+            Keys.Tab => "tab", Keys.Return => "enter", Keys.Space => "space", Keys.Back => "backspace",
+            Keys.Delete => "delete", Keys.Insert => "insert", Keys.Escape => "esc",
+            Keys.Left => "left", Keys.Up => "up", Keys.Right => "right", Keys.Down => "down",
+            Keys.Home => "home", Keys.End => "end", Keys.PageUp => "pageup", Keys.PageDown => "pagedown",
+            Keys.PrintScreen => "printscreen",
+            Keys.OemMinus => "-", Keys.Oemplus => "=", Keys.OemOpenBrackets => "[", Keys.OemCloseBrackets => "]",
+            Keys.OemSemicolon => ";", Keys.OemQuotes => "'", Keys.Oemcomma => ",", Keys.OemPeriod => ".",
+            Keys.OemQuestion => "/", Keys.OemPipe => "\\", Keys.Oemtilde => "`",
+            Keys.VolumeUp => "volumeup", Keys.VolumeDown => "volumedown", Keys.VolumeMute => "mute",
+            Keys.MediaPlayPause => "playpause", Keys.MediaNextTrack => "nexttrack", Keys.MediaPreviousTrack => "prevtrack",
+            _ => null,
+        };
     }
 
     public static ushort? Code(string name) => Codes.TryGetValue(name, out var vk) ? vk : null;

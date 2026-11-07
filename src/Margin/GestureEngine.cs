@@ -48,6 +48,7 @@ internal sealed class GestureEngine
     private Candidate? candidate;
     private bool multiFingerSeen;
     private bool holdingClick;
+    private readonly List<ushort> heldKeys = new(); // modifiers kept down for the current slide (UI thread only)
     private Section? pressedCorner;
     private Section? clickCorner;
     private int clickCount;
@@ -167,7 +168,7 @@ internal sealed class GestureEngine
     {
         float baseStep = Settings.Speed switch { Speed.Slow => 0.06f, Speed.Fast => 0.03f, _ => 0.042f };
         // Discrete actions (tabs, tracks, desktops) get bigger steps so one swipe doesn't overshoot.
-        return a is SlideAction.Tabs or SlideAction.Tracks or SlideAction.Desktops ? baseStep * 2.5f : baseStep;
+        return a is SlideAction.Tabs or SlideAction.Tracks or SlideAction.Desktops or SlideAction.Custom ? baseStep * 2.5f : baseStep;
     }
 
     private void Perform(SlideAction action, int delta, int total)
@@ -199,12 +200,20 @@ internal sealed class GestureEngine
             case SlideAction.Zoom:
                 Post(() => SystemKeys.CtrlWheel(forward ? n : -n));
                 break;
-            case SlideAction.Tabs:
-                Post(() => SystemKeys.Combo(SystemKeys.Tab,
-                    forward ? new[] { SystemKeys.Ctrl } : new[] { SystemKeys.Ctrl, SystemKeys.Shift }, n));
-                break;
             case SlideAction.Tracks:
                 Post(() => SystemKeys.Tap(forward ? SystemKeys.MediaNext : SystemKeys.MediaPrev, n));
+                break;
+            case SlideAction.Tabs:
+                // Hold Alt for the whole slide so the Alt+Tab switcher stays open; Stop() releases it.
+                Post(() =>
+                {
+                    HoldKeys(new[] { SystemKeys.Alt });
+                    SystemKeys.Combo(SystemKeys.Tab, forward ? Array.Empty<ushort>() : new[] { SystemKeys.Shift }, n);
+                });
+                break;
+            case SlideAction.Custom:
+                var cfg = run is { } r ? Settings[r.Section] : null;
+                if (cfg != null) Post(() => SendCustom(cfg, forward, n));
                 break;
             case SlideAction.Desktops:
                 Post(() => SystemKeys.Combo(forward ? SystemKeys.Right : SystemKeys.Left,
@@ -213,12 +222,50 @@ internal sealed class GestureEngine
         }
     }
 
+    /// Presses the modifiers that stay down until the slide ends (Alt for an Alt+Tab switcher).
+    private void HoldKeys(IEnumerable<ushort> keys)
+    {
+        foreach (var k in keys)
+        {
+            if (heldKeys.Contains(k)) continue;
+            SystemKeys.Hold(k, up: false);
+            heldKeys.Add(k);
+        }
+    }
+
+    private void ReleaseHeldKeys()
+    {
+        for (int i = heldKeys.Count - 1; i >= 0; i--) SystemKeys.Hold(heldKeys[i], up: true);
+        heldKeys.Clear();
+    }
+
+    /// Custom keys: sends the user's shortcut for this direction `n` times.
+    private void SendCustom(SectionSettings cfg, bool forward, int n)
+    {
+        if (!ActionRunner.TryParseShortcut(forward ? cfg.Forward : cfg.Back, out var key, out var mods))
+        {
+            hud.ShowText("Set a shortcut for this direction in Margin");
+            return;
+        }
+        if (cfg.HoldModifiers)
+        {
+            // Hold the modifiers both directions share; only the rest are pressed per step.
+            var other = ActionRunner.TryParseShortcut(forward ? cfg.Back : cfg.Forward, out _, out var otherMods)
+                ? otherMods : new List<ushort>();
+            var shared = mods.Where(m => other.Contains(m)).ToList();
+            HoldKeys(shared);
+            mods = mods.Except(shared).ToList();
+        }
+        SystemKeys.Combo(key, mods, n);
+    }
+
     private void Stop()
     {
         if (run == null) return;
         var action = run.Action;
         Log.Debug($"slide end {run.Section} after {run.Steps} steps");
         run = null;
+        if (action is SlideAction.Tabs or SlideAction.Custom) Post(ReleaseHeldKeys);
         if (action is SlideAction.Brightness or SlideAction.Seek) Post(() => hud.HideAfter(700));
     }
 

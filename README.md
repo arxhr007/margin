@@ -6,7 +6,7 @@ Open the settings, click a section on the touchpad map, pick an action. That's i
 
 | Section | You can assign |
 | --- | --- |
-| **Left / right / top / bottom edge** (slide along it) | Volume · Screen brightness · Seek video/audio · Zoom · Switch tabs · Previous/next track · Switch virtual desktops · Nothing |
+| **Left / right / top / bottom edge** (slide along it) | Volume · Screen brightness · Seek video/audio · Zoom · Switch tabs / windows (Alt+Tab) · Previous/next track · Switch virtual desktops · **Custom keys** (record any shortcut for each direction) · Nothing |
 | **Four corners** (1, 2 or 3 clicks) | Mute · Play/pause · Next/previous track · Screenshot · Task View · Show desktop · Lock · Notifications · Open an app · Open a website · Press a shortcut · Run a command · Nothing |
 
 Defaults: left = volume, right = brightness, top = switch tabs, bottom = switch virtual desktops. Corners: top-left = show desktop, top-right = Task View (1 click) / notifications (2), bottom-left = lock, bottom-right = play/pause (1) / next (2) / previous (3). Slide-in is the default start mode.

@@ -10,9 +10,10 @@ internal static class Labels
         SlideAction.Brightness => "Screen brightness",
         SlideAction.Seek => "Seek video / audio",
         SlideAction.Zoom => "Zoom in / out",
-        SlideAction.Tabs => "Switch tabs",
+        SlideAction.Tabs => "Switch tabs (Alt+Tab)",
         SlideAction.Tracks => "Previous / next track",
         SlideAction.Desktops => "Switch virtual desktops",
+        SlideAction.Custom => "Custom keys…",
         _ => a.ToString(),
     };
 
@@ -22,6 +23,7 @@ internal static class Labels
         SlideAction.Brightness => "Brightness",
         SlideAction.Tracks => "Tracks",
         SlideAction.Desktops => "Desktops",
+        SlideAction.Custom => "Keys",
         _ => a.ToString(),
     };
 
