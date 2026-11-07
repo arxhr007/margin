@@ -1,13 +1,16 @@
 // Embeds the application manifest (DPI awareness, visual styles) and an icon drawn by the same
 // rasterizer the app uses at runtime, so the .exe in Explorer matches the tray icon.
 
+#[cfg(windows)]
 #[path = "src/icon_art.rs"]
 #[allow(dead_code)]
 mod icon_art;
 
+#[cfg(windows)]
 use std::fmt::Write as _;
 
 /// A 32-bit BMP-based .ico containing the artwork at several sizes.
+#[cfg(windows)]
 fn make_ico(sizes: &[i32]) -> Vec<u8> {
     let mut images: Vec<Vec<u8>> = Vec::new();
     for &size in sizes {
@@ -54,6 +57,10 @@ fn make_ico(sizes: &[i32]) -> Vec<u8> {
     ico
 }
 
+#[cfg(not(windows))]
+fn main() {}
+
+#[cfg(windows)]
 fn main() {
     println!("cargo:rerun-if-changed=margin.manifest");
     println!("cargo:rerun-if-changed=src/icon_art.rs");

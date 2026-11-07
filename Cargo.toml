@@ -1,8 +1,8 @@
 [package]
 name = "margin"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
-description = "Assign controls to the edges and corners of your Windows touchpad"
+description = "Assign controls to the edges and corners of your touchpad (Windows and Linux)"
 license = "MIT"
 
 [dependencies]
@@ -10,7 +10,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indexmap = { version = "2", features = ["serde"] }
 
-[dependencies.windows]
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [
     "Win32_Foundation",
@@ -41,7 +44,7 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 embed-resource = "2"
 
 [profile.release]

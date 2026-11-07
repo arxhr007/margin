@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Margin settings</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f1f2f4; --card: #ffffff; --fg: #1c1c1e; --muted: #6a6a72; --border: #cfd0d6;
+    --accent: #0067c0; --zone: #c3d6ec; --zone-hover: #a9c7e6; --zone-sel: #7fb0de; --zone-off: transparent;
+    --pad: #f4f5f7; --padline: #9a9aa2; --ink: #2b2b30; --bad: #fde4e4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181b; --card: #222327; --fg: #ececf0; --muted: #a2a2ac; --border: #3c3d44;
+      --accent: #4aa3ff; --zone: #2f4a67; --zone-hover: #3a5d82; --zone-sel: #3f78b0; --zone-off: transparent;
+      --pad: #2a2b30; --padline: #5a5b63; --ink: #e8e8ee; --bad: #5a2a2a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 0; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0; }
+  #status { color: var(--muted); font-size: 13px; }
+  #status.err { color: #d33; }
+  main { max-width: 1100px; margin: 0 auto; padding: 12px 20px 28px; display: grid; gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; }
+  label.inline { display: inline-flex; gap: 8px; align-items: center; }
+  .cols { display: grid; grid-template-columns: minmax(300px, 1.3fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
+  select, input[type=text] { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; }
+  input[type=text].bad { background: var(--bad); }
+  .keyrow { display: flex; gap: 8px; }
+  button { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; cursor: pointer; white-space: nowrap; }
+  button.rec { background: var(--accent); color: #fff; border-color: var(--accent); }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  .field { margin: 0 0 10px; }
+  .field > span { display: block; font-weight: 600; margin-bottom: 4px; }
+  p.hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  svg { width: 100%; height: auto; display: block; }
+  .zone { fill: var(--zone-off); stroke: var(--padline); stroke-dasharray: 2 1.5; stroke-width: .5; cursor: pointer; }
+  .zone.assigned { fill: var(--zone); stroke-dasharray: none; stroke-opacity: .7; }
+  .zone:hover { fill: var(--zone-hover); }
+  .zone.sel { fill: var(--zone-sel); stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: none; }
+  .zlabel { fill: var(--ink); font-size: 4.4px; pointer-events: none; text-anchor: middle; dominant-baseline: central; }
+  .zlabel.small { font-size: 3.2px; }
+  .zlabel.sel { font-weight: 700; }
+  .center { fill: var(--muted); font-size: 4.4px; text-anchor: middle; pointer-events: none; }
+  .note { font-size: 13px; color: var(--muted); }
+  input[type=range] { width: 150px; }
+</style>
+</head>
+<body>
+<header><h1>Margin</h1><span id="status">Loading…</span></header>
+<main>
+  <section class="card">
+    <div class="row">
+      <label class="inline"><input type="checkbox" id="enabled"> Margin is on</label>
+      <label class="inline">Speed
+        <select id="speed" style="width:auto"><option value="slow">Slow</option><option value="medium">Medium</option><option value="fast">Fast</option></select>
+      </label>
+      <label class="inline">Edge size <input type="range" id="edgeDepth" min="5" max="25"> <span id="edgeVal" class="note"></span></label>
+      <label class="inline">Corner size <input type="range" id="cornerSize" min="8" max="30"> <span id="cornerVal" class="note"></span></label>
+    </div>
+    <p class="hint">On Linux, a slide starts by bringing a finger in from the laptop body onto the edge (no click). Corner presses also click normally, because Margin only listens to the touchpad. Click a section on the map to change it. Changes are saved and applied automatically.</p>
+  </section>
+  <div class="cols">
+    <section class="card"><svg id="pad" viewBox="0 0 160 100" role="img" aria-label="Touchpad sections"></svg></section>
+    <section class="card" id="editor"></section>
+  </div>
+</main>
+<script>
+"use strict";
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const SECTIONS = ["topLeft", "topRight", "bottomLeft", "bottomRight", "left", "right", "top", "bottom"];
+const NAMES = { left: "Left edge", right: "Right edge", top: "Top edge", bottom: "Bottom edge", topLeft: "Top-left corner", topRight: "Top-right corner", bottomLeft: "Bottom-left corner", bottomRight: "Bottom-right corner" };
+const SLIDES = [
+  ["off", "Nothing (normal touchpad)", ""], ["volume", "Volume", "Volume"], ["brightness", "Screen brightness", "Brightness"],
+  ["seek", "Seek video / audio", "Seek"], ["zoom", "Zoom in / out", "Zoom"], ["tabs", "Switch windows (Alt+Tab)", "Windows"],
+  ["tracks", "Previous / next track", "Tracks"], ["desktops", "Switch virtual desktops (Ctrl+Super+arrows)", "Desktops"], ["custom", "Custom keys…", "Keys"],
+];
+const CLICKS = [
+  ["none", "Nothing", ""], ["mute", "Mute / unmute", "Mute"], ["playPause", "Play / pause", "Play"], ["nextTrack", "Next track", "Next"],
+  ["prevTrack", "Previous track", "Prev"], ["screenshot", "Screenshot (Print Screen key)", "Snip"], ["taskView", "Overview (Super key)", "Overview"],
+  ["showDesktop", "Show desktop (Super+D)", "Desktop"], ["lock", "Lock the screen", "Lock"], ["notifications", "Notifications (Super+N)", "Notifs"],
+  ["app", "Run a program…", "App"], ["url", "Open a website…", "Url"], ["keys", "Press a shortcut…", "Keys"], ["command", "Run a command…", "Run"],
+];
+const NEEDS_VALUE = { app: "e.g. firefox or /usr/bin/gimp", url: "e.g. https://youtube.com", keys: "e.g. Ctrl+Shift+Esc", command: "e.g. notify-send hello" };
+const PRESETS = [
+  ["Alt+Tab: switch windows", "Alt+Tab", "Alt+Shift+Tab", true],
+  ["Ctrl+Tab: switch browser tabs", "Ctrl+Tab", "Ctrl+Shift+Tab", false],
+  ["Ctrl+PageDown / PageUp: next / previous tab", "Ctrl+PageDown", "Ctrl+PageUp", false],
+  ["Page Up / Page Down: scroll", "PageUp", "PageDown", false],
+  ["Right / Left arrow", "Right", "Left", false],
+  ["Ctrl+Y / Ctrl+Z: redo / undo", "Ctrl+Y", "Ctrl+Z", false],
+];
+const MODS = new Set(["ctrl", "control", "cmd", "command", "shift", "alt", "opt", "option", "win", "windows", "super", "meta"]);
+const KEYNAMES = new Set(["-", "=", "[", "]", ";", "'", ",", ".", "/", "\\", "`", "return", "enter", "tab", "space", "backspace", "delete", "del", "insert", "escape", "esc",
+  "left", "up", "right", "down", "home", "end", "pageup", "pagedown", "printscreen", "prtsc", "volumeup", "volumedown", "mute", "playpause", "nexttrack", "prevtrack"]);
+
+let S = null, selected = "right", saveTimer = null, recording = null;
+const $ = (s, r = document) => r.querySelector(s);
+
+function validShortcut(text) {
+  const parts = text.split("+").map(p => p.trim()).filter(Boolean);
+  if (!parts.length) return false;
+  const key = parts.pop().toLowerCase();
+  if (!parts.every(p => MODS.has(p.toLowerCase()))) return false;
+  return /^[a-z0-9]$/.test(key) || /^f([1-9]|1\d|2[0-4])$/.test(key) || KEYNAMES.has(key);
+}
+
+function section(key) {
+  if (!S.sections[key]) S.sections[key] = { slide: "off", clicks: [], holdModifiers: false };
+  const s = S.sections[key];
+  s.clicks = s.clicks || [];
+  return s;
+}
+const CORNERS = new Set(["topLeft", "topRight", "bottomLeft", "bottomRight"]);
+const isCorner = k => CORNERS.has(k);
+
+function bounds(k) {
+  const c = S.cornerSize, d = S.edgeDepth;
+  return ({
+    topLeft: { x: 0, y: 1 - c, w: c, h: c }, topRight: { x: 1 - c, y: 1 - c, w: c, h: c },
+    bottomLeft: { x: 0, y: 0, w: c, h: c }, bottomRight: { x: 1 - c, y: 0, w: c, h: c },
+    left: { x: 0, y: c, w: d, h: 1 - 2 * c }, right: { x: 1 - d, y: c, w: d, h: 1 - 2 * c },
+    top: { x: c, y: 1 - d, w: 1 - 2 * c, h: d }, bottom: { x: c, y: 0, w: 1 - 2 * c, h: d },
+  })[k];
+}
+
+function summary(k) {
+  const s = section(k);
+  if (!isCorner(k)) return (SLIDES.find(x => x[0] === s.slide) || [])[2] || "";
+  const used = s.clicks.filter(c => c.do && c.do !== "none");
+  if (!used.length) return "";
+  const short = (CLICKS.find(x => x[0] === used[0].do) || [])[2] || "";
+  return used.length === 1 ? short : `${short} +${used.length - 1}`;
+}
+
+function assigned(k) {
+  const s = section(k);
+  return isCorner(k) ? s.clicks.some(c => c.do && c.do !== "none") : s.slide !== "off";
+}
+
+function renderPad() {
+  const svg = $("#pad");
+  let out = `<rect x="1" y="1" width="158" height="98" rx="7" fill="var(--pad)" stroke="var(--padline)" stroke-width="1"/>`;
+  for (const k of SECTIONS) {
+    const b = bounds(k), x = b.x * 160 + 1, y = (1 - b.y - b.h) * 100 + 1, w = b.w * 160 - 2, h = b.h * 100 - 2;
+    if (w <= 0 || h <= 0) continue;
+    const cls = ["zone", assigned(k) ? "assigned" : "", k === selected ? "sel" : ""].join(" ");
+    out += `<rect class="${cls}" data-k="${k}" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"><title>${NAMES[k]}</title></rect>`;
+    const text = summary(k);
+    if (text) {
+      const cx = x + w / 2, cy = y + h / 2;
+      const rot = k === "left" ? -90 : k === "right" ? 90 : 0;
+      const small = isCorner(k) ? " small" : "";
+      out += `<text class="zlabel${small}${k === selected ? " sel" : ""}" transform="rotate(${rot} ${cx} ${cy})" x="${cx}" y="${cy}">${text}</text>`;
+    }
+  }
+  out += `<text class="center" x="80" y="51">Normal touchpad</text>`;
+  svg.innerHTML = out;
+}
+
+function option(list, value) {
+  return list.map(([v, label]) => `<option value="${v}"${v === value ? " selected" : ""}>${label}</option>`).join("");
+}
+
+function renderEditor() {
+  const s = section(selected), ed = $("#editor");
+  let h = `<h2>${NAMES[selected]}</h2>`;
+  if (!isCorner(selected)) {
+    h += `<div class="field"><span>Sliding along this edge controls:</span><select id="slide">${option(SLIDES, s.slide)}</select></div>`;
+    if (s.slide === "custom") {
+      const vertical = selected === "left" || selected === "right";
+      const [a, b] = vertical ? ["Slide up", "Slide down"] : ["Slide right", "Slide left"];
+      h += `<div class="field"><span>Preset</span><select id="preset"><option value="">Choose a preset…</option>${PRESETS.map((p, i) => `<option value="${i}">${p[0]}</option>`).join("")}</select></div>`;
+      h += `<div class="field"><span>${a} presses:</span><div class="keyrow"><input type="text" id="fwd" value="${esc(s.forward || "")}" spellcheck="false"><button data-rec="fwd">Record</button></div></div>`;
+      h += `<div class="field"><span>${b} presses:</span><div class="keyrow"><input type="text" id="back" value="${esc(s.back || "")}" spellcheck="false"><button data-rec="back">Record</button></div></div>`;
+      h += `<label class="inline"><input type="checkbox" id="hold"${s.holdModifiers ? " checked" : ""}> Hold shared modifiers while sliding</label>`;
+      h += `<p class="hint">Click Record, then press the keys. Your desktop keeps some combos (Alt+Tab, Super+…) to itself, so type those instead, like Alt+Tab or Ctrl+Super+Right. Each step of the slide presses the shortcut once. "Hold shared modifiers" keeps Alt down until you lift your finger, like holding Alt while pressing Tab.</p>`;
+    }
+    h += `<p class="hint">${selected === "left" || selected === "right" ? "Slide up for more / next, down for less / previous." : "Slide right for forward / next, left for back / previous."}</p>`;
+  } else {
+    h += `<p class="field"><span>Press this corner until the touchpad clicks:</span></p>`;
+    for (let i = 0; i < 3; i++) {
+      const c = s.clicks[i] || { do: "none" };
+      h += `<div class="field"><span>${i === 0 ? "1 click" : i + 1 + " clicks"}</span><select data-slot="${i}" class="act">${option(CLICKS, c.do || "none")}</select>`;
+      if (NEEDS_VALUE[c.do]) h += `<input type="text" data-val="${i}" class="val" placeholder="${NEEDS_VALUE[c.do]}" value="${esc(c.value || "")}" spellcheck="false" style="margin-top:6px">`;
+      h += `</div>`;
+    }
+    h += `<p class="hint">Corners react only to a real press, never to a tap. Unused corners stay a normal touchpad.</p>`;
+  }
+  ed.innerHTML = h;
+  ed.querySelectorAll("input.val").forEach(markBad);
+  ["fwd", "back"].forEach(id => { const el = $("#" + id); if (el) markBad(el); });
+}
+
+function esc(t) { return String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
+
+function markBad(el) {
+  const isKeys = el.id === "fwd" || el.id === "back" || (el.dataset.val !== undefined && section(selected).clicks[+el.dataset.val]?.do === "keys");
+  el.classList.toggle("bad", isKeys && el.value.trim() !== "" && !validShortcut(el.value));
+}
+
+function status(text, bad) { const s = $("#status"); s.textContent = text; s.className = bad ? "err" : ""; }
+
+function changed() {
+  renderPad();
+  status("Saving…");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 350);
+}
+
+async function save() {
+  try {
+    const r = await fetch("/api/settings", { method: "PUT", headers: { "X-Margin-Token": TOKEN, "Content-Type": "application/json" }, body: JSON.stringify(S) });
+    status(r.ok ? "Saved. Changes apply within a second." : "Could not save: " + (await r.text()), !r.ok);
+  } catch (e) { status("Could not save: " + e, true); }
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/settings", { headers: { "X-Margin-Token": TOKEN } });
+    if (!r.ok) throw new Error(r.status === 403 ? "open this page with the link `margin settings` prints (it contains a one-time key)" : await r.text());
+    S = await r.json();
+    status("Loaded.");
+    renderAll();
+  } catch (e) { status("Could not load settings: " + e.message, true); }
+}
+
+function renderAll() {
+  $("#enabled").checked = !!S.enabled;
+  $("#speed").value = S.speed || "medium";
+  $("#edgeDepth").value = Math.round(S.edgeDepth * 100); $("#edgeVal").textContent = Math.round(S.edgeDepth * 100) + "%";
+  $("#cornerSize").value = Math.round(S.cornerSize * 100); $("#cornerVal").textContent = Math.round(S.cornerSize * 100) + "%";
+  renderPad(); renderEditor();
+}
+
+// ---- events ----
+$("#enabled").onchange = e => { S.enabled = e.target.checked; changed(); };
+$("#speed").onchange = e => { S.speed = e.target.value; changed(); };
+$("#edgeDepth").oninput = e => { S.edgeDepth = e.target.value / 100; $("#edgeVal").textContent = e.target.value + "%"; changed(); };
+$("#cornerSize").oninput = e => { S.cornerSize = e.target.value / 100; $("#cornerVal").textContent = e.target.value + "%"; changed(); };
+$("#pad").onclick = e => { const k = e.target.closest("[data-k]")?.dataset.k; if (k) { selected = k; renderPad(); renderEditor(); } };
+
+$("#editor").addEventListener("change", e => {
+  const t = e.target, s = section(selected);
+  if (t.id === "slide") {
+    s.slide = t.value;
+    if (t.value === "custom" && !(s.forward || "").trim() && !(s.back || "").trim()) { s.forward = "Ctrl+Tab"; s.back = "Ctrl+Shift+Tab"; s.holdModifiers = false; }
+    changed(); renderEditor();
+  } else if (t.id === "preset" && t.value !== "") {
+    const [, f, b, hold] = PRESETS[+t.value];
+    s.forward = f; s.back = b; s.holdModifiers = hold; changed(); renderEditor();
+  } else if (t.id === "hold") { s.holdModifiers = t.checked; changed(); }
+  else if (t.classList.contains("act")) {
+    const i = +t.dataset.slot;
+    while (s.clicks.length <= i) s.clicks.push({ do: "none" });
+    s.clicks[i].do = t.value;
+    if (!NEEDS_VALUE[t.value]) delete s.clicks[i].value;
+    changed(); renderEditor();
+  }
+});
+$("#editor").addEventListener("input", e => {
+  const t = e.target, s = section(selected);
+  if (t.id === "fwd" || t.id === "back") { s[t.id === "fwd" ? "forward" : "back"] = t.value.trim() || undefined; markBad(t); changed(); }
+  else if (t.classList.contains("val")) {
+    const i = +t.dataset.val;
+    s.clicks[i].value = t.value.trim() || undefined; markBad(t); changed();
+  }
+});
+$("#editor").addEventListener("click", e => {
+  const id = e.target.dataset?.rec;
+  if (!id) return;
+  const input = $("#" + id);
+  if (recording === input) { stopRecording(); return; }
+  stopRecording();
+  recording = input; e.target.textContent = "Press keys…"; e.target.classList.add("rec"); input.focus();
+});
+function stopRecording() {
+  recording = null;
+  document.querySelectorAll("[data-rec]").forEach(b => { b.textContent = "Record"; b.classList.remove("rec"); });
+}
+
+const CODE_NAMES = { Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/", Backslash: "\\", Backquote: "`",
+  Enter: "Enter", Tab: "Tab", Space: "Space", Backspace: "Backspace", Delete: "Delete", Insert: "Insert", Escape: "Esc", ArrowLeft: "Left", ArrowRight: "Right",
+  ArrowUp: "Up", ArrowDown: "Down", Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown", PrintScreen: "PrintScreen" };
+function keyName(code) {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  if (/^F([1-9]|1\d|2[0-4])$/.test(code)) return code;
+  return CODE_NAMES[code] || null;
+}
+document.addEventListener("keydown", e => {
+  if (!recording) return;
+  e.preventDefault(); e.stopPropagation();
+  if (["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight", "OS"].includes(e.code)) return;
+  const name = keyName(e.code);
+  if (!name) return;
+  const parts = [];
+  if (e.ctrlKey) parts.push("Ctrl"); if (e.altKey) parts.push("Alt"); if (e.shiftKey) parts.push("Shift"); if (e.metaKey) parts.push("Win");
+  parts.push(name);
+  const input = recording;
+  stopRecording();
+  input.value = parts.join("+");
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}, true);
+
+load();
+</script>
+</body>
+</html>

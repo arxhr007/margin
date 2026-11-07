@@ -290,11 +290,24 @@ impl Settings {
 
 // ---------------------------------------------------------------- storage
 
+/// Windows: `%APPDATA%\Margin`. Elsewhere: `$XDG_CONFIG_HOME/margin` (default `~/.config/margin`).
 pub fn directory() -> PathBuf {
-    let base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("Margin")
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join("Margin")
+    }
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."));
+        base.join("margin")
+    }
 }
 
 pub fn file_path() -> PathBuf {
@@ -317,16 +330,19 @@ pub fn load() -> Settings {
     settings
 }
 
+/// Saves the settings, reporting any error to the caller.
+pub fn try_save(settings: &Settings) -> std::io::Result<()> {
+    std::fs::create_dir_all(directory())?;
+    let path = file_path();
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, &path)
+}
+
+/// Saves the settings; a failure is logged, not fatal.
 pub fn save(settings: &Settings) {
-    let result = (|| -> std::io::Result<()> {
-        std::fs::create_dir_all(directory())?;
-        let path = file_path();
-        let tmp = path.with_extension("json.tmp");
-        let text = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, &path)
-    })();
-    if let Err(e) = result {
+    if let Err(e) = try_save(settings) {
         crate::log::error(format!("could not save settings: {e}"));
     }
 }

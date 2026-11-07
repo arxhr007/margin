@@ -36,6 +36,7 @@ const ID_FWD_REC: u16 = 203;
 const ID_BACK_BOX: u16 = 204;
 const ID_BACK_REC: u16 = 205;
 const ID_HOLD: u16 = 206;
+const ID_CUSTOMIZE: u16 = 207;
 const ID_CORNER_BASE: u16 = 300; // + slot * 10: +0 combo, +1 value, +2 browse
 
 const WM_REBUILD: u32 = WM_APP + 20;
@@ -556,6 +557,19 @@ fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
 
     if v.slide == SlideAction::Custom {
         build_custom_keys(c, section, &v);
+    } else if v.slide == SlideAction::Tabs {
+        // "Switch tabs" is fixed to Alt+Tab; this is the way to other keys and the presets.
+        c.para(
+            "Sliding sends Alt+Tab and keeps Alt held, so the window picker stays open. To use other keys, or a preset \
+             such as Ctrl+Tab for browser tabs, change the keys:",
+            false,
+            false,
+            6.0,
+        );
+        let button = make_child(c.parent, w!("BUTTON"), "Change the keys\u{2026}", BS_PUSHBUTTON | WS_TABSTOP.0, 0, ID_CUSTOMIZE, c.font);
+        move_to(button, c.x, c.y, px(150.0, c.scale), px(28.0, c.scale));
+        c.y += px(38.0, c.scale);
+        c.register(button, false);
     }
 
     let direction = if section.is_vertical() {
@@ -757,6 +771,18 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             changed();
         }
         ID_FWD_REC | ID_BACK_REC if code == 0 => begin_recording(id),
+        ID_CUSTOMIZE if code == 0 => {
+            // start from what "Switch tabs" does today, so nothing changes until the user edits it
+            app::edit_settings(|s| {
+                let v = s.section_mut(section);
+                v.slide = SlideAction::Custom;
+                v.forward = Some("Alt+Tab".into());
+                v.back = Some("Alt+Shift+Tab".into());
+                v.hold_modifiers = true;
+            });
+            changed();
+            post_rebuild(hwnd); // shows the preset list and the key fields
+        }
         ID_HOLD if code == 0 => {
             let on = is_checked(control);
             app::edit_settings(|s| s.section_mut(section).hold_modifiers = on);

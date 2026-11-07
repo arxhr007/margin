@@ -5,14 +5,14 @@
 <h1 align="center">Margin</h1>
 
 <p align="center">
-  <strong>Turn the edges and corners of your Windows touchpad into controls.</strong><br>
+  <strong>Turn the edges and corners of your touchpad into controls.</strong><br>
   Slide along an edge for volume, brightness, seeking or Alt+Tab. Press a corner to run anything. You choose what each one does.
 </p>
 
 <p align="center">
-  <img alt="Platform: Windows 10 and 11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4">
+  <img alt="Platforms: Windows 10 and 11, Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0078d4">
   <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-dea584">
-  <img alt="Size: about 0.6 MB" src="https://img.shields.io/badge/exe-~0.6%20MB-2ea44f">
+  <img alt="Size: about 0.6 MB" src="https://img.shields.io/badge/binary-~0.6%20MB-2ea44f">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
@@ -26,11 +26,64 @@ Most laptop touchpads only use their middle for gestures. Margin uses the unused
 - **Press a corner** once, twice or three times to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
 - **Record your own shortcuts** for each slide direction, so an edge can drive any app.
 
-Everything in the middle of the touchpad stays a normal touchpad. Margin is a single native `margin.exe` of about 0.6 MB, needs nothing installed, uses no network and sends no telemetry.
+Everything in the middle of the touchpad stays a normal touchpad. Margin is one small native program (about 0.6 MB) that needs nothing installed, uses no network and sends no telemetry.
+
+## Install
+
+**Windows 10 / 11.** Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/arxhr007/margin/main/scripts/install.ps1 | iex
+```
+
+**Linux** (any distribution with systemd, x86_64 or arm64). Run in a terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/arxhr007/margin/main/scripts/install.sh | sh
+```
+
+Both scripts download the latest release, check its SHA-256, install it for your user only, and start it. They are short, so you can [read the Windows one](scripts/install.ps1) and [the Linux one](scripts/install.sh) first.
+
+<details>
+<summary><b>Installer options, manual download, build from source</b></summary>
+
+**Windows options** (set before the command):
+
+```powershell
+$env:MARGIN_AUTOSTART = 1          # also start Margin when you sign in
+$env:MARGIN_VERSION = "v0.4.0"     # a specific release instead of the latest
+$env:MARGIN_UNINSTALL = 1          # remove Margin (your settings are kept)
+```
+
+It installs to `%LOCALAPPDATA%\Programs\Margin`, adds a Start Menu shortcut and needs no administrator rights. A file fetched this way is not marked as "downloaded from the internet", so SmartScreen does not warn about it.
+
+**Linux options** (after `sh -s --`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/arxhr007/margin/main/scripts/install.sh | sh -s -- --version v0.4.0
+#   --no-service       don't set up the systemd user service
+#   --no-permissions   don't touch udev rules or groups
+#   --uninstall        remove Margin (your settings are kept)
+```
+
+It installs `~/.local/bin/margin`, does one `sudo` step for the permissions described under [Linux](#linux), and sets up a systemd user service that starts with your desktop session.
+
+**Manual download.** Every [release](../../releases) has `margin.exe` (Windows) and `margin-linux-x86_64` / `margin-linux-aarch64` (Linux, static, no dependencies), each with a `.sha256` file.
+
+**Build from source** (needs the [Rust toolchain](https://rustup.rs); on Windows also the "Desktop development with C++" build tools):
+
+```sh
+git clone https://github.com/arxhr007/margin.git
+cd margin
+cargo build --release     # target/release/margin  (margin.exe on Windows)
+```
+
+> The Windows exe is not code-signed. If you download it in a browser, SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**. The PowerShell installer avoids this.
+</details>
 
 ## Contents
 
-[Screenshots](#screenshots) · [Install](#install) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [License](#license)
+[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [License](#license)
 
 ## Screenshots
 
@@ -45,30 +98,17 @@ Everything in the middle of the touchpad stays a normal touchpad. Margin is a si
   <img src="docs/images/hud-brightness.png" alt="On-screen display showing Brightness 70%" height="61">
   &nbsp;&nbsp;&nbsp;
   <img src="docs/images/hud-seek.png" alt="On-screen display showing a seek of 10 seconds" height="61">
-  <br><sub>The small on-screen display for brightness and seeking. Volume uses the normal Windows volume flyout.</sub>
+  <br><sub>The small on-screen display for brightness and seeking on Windows. Volume uses the normal Windows volume flyout.</sub>
 </p>
 
-## Install
-
-**Requirements:** Windows 10 or 11 with a **precision touchpad**. Check under *Settings → Bluetooth & devices → Touchpad*: it should say "Your PC has a precision touchpad". Brightness control works on the laptop's built-in screen, not on external monitors.
-
-**Build from source** (needs the [Rust toolchain](https://rustup.rs) for the MSVC target and the "Desktop development with C++" build tools):
-
-```powershell
-git clone https://github.com/arxhr007/margin.git
-cd margin
-cargo build --release
-```
-
-The program is `target\release\margin.exe`. Copy it anywhere and run it.
-
-**Download:** grab `margin.exe` from the [Releases](../../releases) page. v0.3.0 and later are this Rust build; v0.2.x are the earlier C# build, which works the same way and uses the same settings file.
-
-**First run.** The settings window opens. Afterwards Margin lives in the notification area: left-click its icon for settings, right-click for *Settings, On/Off, Open log, Quit*. Launching `margin.exe` again opens the settings of the copy that is already running. Tick **Start with Windows** to launch it at sign-in.
-
-> The exe is not code-signed, so Windows SmartScreen may say "Windows protected your PC" the first time. Choose **More info → Run anyway**, or build it yourself from source.
+<p align="center">
+  <img src="docs/images/linux-settings.png" alt="The Linux settings page in a browser: touchpad map and the custom keys editor" width="760">
+  <br><sub>On Linux the settings open as a page in your browser (<code>margin settings</code>), with the same map and editors.</sub>
+</p>
 
 ## Using Margin
+
+On Windows, left-click the tray icon (or launch `margin.exe` again) to open settings. On Linux, run `margin settings`.
 
 ### Edges: slide along them
 
@@ -85,36 +125,36 @@ Click an edge on the touchpad map, then choose what sliding along it controls:
 | **Switch virtual desktops** | desktop to the right | desktop to the left |
 | **Custom keys** | your shortcut | your other shortcut |
 
-Slide **up or right** for "more / next" and **down or left** for "less / previous". Hold **Ctrl + Shift** while sliding for fine steps. The *Speed* setting changes how far you must slide per step.
+Slide **up or right** for "more / next" and **down or left** for "less / previous". The *Speed* setting changes how far you must slide per step. On Windows, hold **Ctrl + Shift** while sliding for fine steps.
 
 ### Two ways to start a slide
 
-Pick one under *Start a slide by*:
+Pick one under *Start a slide by* (Windows; Linux always uses the first):
 
 - **Slide in from the edge** (default): bring a finger in from the laptop body onto the edge, then move along it. No click. A finger that first lands inside the touchpad, or any two-finger contact, never triggers it.
 - **Press the edge until it clicks, then slide**: rest a finger on the edge, press until the touchpad clicks, and slide without letting go. The hardest to trigger by accident.
 
-While a slide runs the pointer stays still and nothing is clicked underneath.
+On Windows, while a slide runs the pointer stays still and nothing is clicked underneath.
 
 ### Corners: press them
 
 Press a corner until the touchpad physically clicks. Taps are ignored. Each corner can run a different action for **1, 2 or 3 presses**:
 
-Mute · Play / pause · Next / previous track · Screenshot (Snipping Tool) · Task View · Show desktop · Lock the PC · Notifications · **Open an app** · **Open a website** · **Press a shortcut** · **Run a command** · Nothing
+Mute · Play / pause · Next / previous track · Screenshot · Task View / overview · Show desktop · Lock the PC · Notifications · **Open an app** · **Open a website** · **Press a shortcut** · **Run a command** · Nothing
 
 Defaults: top-left = show desktop, top-right = Task View (1 press) / notifications (2), bottom-left = lock, bottom-right = play/pause (1) / next (2) / previous (3). On the edges: left = volume, right = brightness, top = switch windows, bottom = switch virtual desktops.
 
-The **Edge size** and **Corner size** sliders at the bottom of the window change how big each zone is. The map always shows the real zones, and orange dots show where your fingers are on the pad.
+The **Edge size** and **Corner size** sliders change how big each zone is. The map always shows the real zones. On Windows, orange dots on the map show where your fingers are on the pad.
 
 ## Custom keys
 
-Choose **Custom keys…** for an edge to make it send your own shortcuts.
+Choose **Custom keys…** for an edge to make it send your own shortcuts. (The ready-made **Switch tabs (Alt+Tab)** entry is fixed; its **Change the keys…** button turns it into Custom keys, starting from Alt+Tab.)
 
 1. Pick a **preset**, or click **Record** next to *Slide right presses* and press the keys.
 2. Do the same for the other direction.
 3. Tick **Hold shared modifiers while sliding** for Alt+Tab-style pickers: the modifiers both shortcuts share (Alt) stay down until you lift your finger.
 
-Windows keeps a few combinations to itself (Alt+Tab, Win+…), so the Record button can't capture them. **Type them in the box instead.** Shortcut text looks like `Ctrl+Shift+Tab`, `Alt+Tab`, `Win+Ctrl+Right`, `Ctrl+PageDown` or `F11`.
+Your system keeps a few combinations to itself (Alt+Tab, anything with the Windows or Super key), so the Record button can't capture them. **Type them in the box instead.** Shortcut text looks like `Ctrl+Shift+Tab`, `Alt+Tab`, `Win+Ctrl+Right` (`Win` is the Super key on Linux), `Ctrl+PageDown` or `F11`.
 
 | Preset | Slide right / up | Slide left / down | Hold |
 | --- | --- | --- | --- |
@@ -125,9 +165,49 @@ Windows keeps a few combinations to itself (Alt+Tab, Win+…), so the Record but
 | Arrow keys | `Right` | `Left` | no |
 | Redo / undo | `Ctrl+Y` | `Ctrl+Z` | no |
 
+## Linux
+
+Margin on Linux is a small background program (a systemd user service) plus a settings page in your browser. It works on Wayland and X11 alike, because it reads the touchpad and sends keys at the kernel level instead of talking to a display server. **This is the first Linux release (v0.4.0):** it is tested end to end with a virtual touchpad and in CI, but not yet across many real laptops and desktops, so bug reports are welcome.
+
+```sh
+margin settings      # open the settings page (it prints a private link and opens your browser)
+margin --diag        # run in a terminal and print every touch frame and gesture
+margin config-path   # where settings.json lives (~/.config/margin/settings.json)
+systemctl --user status margin
+```
+
+**Requirements:** a touchpad that your system handles as a multitouch device (nearly every modern laptop; old "semi-MT" Synaptics pads aren't supported), and systemd for the automatic start (otherwise run `margin` yourself).
+
+### Permissions
+
+Margin needs to **read the touchpad** (`/dev/input/event*`, group `input`) and **create a virtual keyboard** (`/dev/uinput`). The installer does this with one `sudo` step: it adds a udev rule that gives the `input` group access to `/dev/uinput`, loads the `uinput` module at boot, and adds you to the `input` group. **Log out and back in once** afterwards. To do it by hand:
+
+```sh
+sudo groupadd -f input && sudo usermod -aG input "$USER"
+echo 'KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-margin-uinput.rules
+echo uinput | sudo tee /etc/modules-load.d/margin-uinput.conf
+sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+> Being in the `input` group lets any program you run read all your input devices, including the keyboard. Margin itself only opens devices that look like touchpads, and its code is small enough to check, but you should know what the group allows.
+
+### What is different from Windows
+
+| | Windows | Linux |
+| --- | --- | --- |
+| Start a slide | slide in from the edge, or press and slide | slide in from the edge only |
+| Pointer while sliding | frozen | still moves (Margin only listens to the touchpad) |
+| Corner presses | hidden from other apps | the press also clicks, wherever the pointer is |
+| Brightness and volume | exact steps, Margin's own on-screen display | media keys: your desktop sets the step and shows its own display |
+| Fine steps (Ctrl+Shift) | yes | not yet |
+| Switch virtual desktops | Ctrl+Win+Left/Right | Ctrl+Super+Left/Right; some desktops use other keys, so use Custom keys there |
+| Settings | native window and tray icon | page in your browser, no tray icon |
+
+`margin settings` only listens on `127.0.0.1` and every request needs a random key that is part of the link it prints, so other programs and web pages can't change your settings (they could otherwise add a "run a command" corner). Changes you make there are applied by the running program within a second.
+
 ## Settings file
 
-Settings are saved automatically to `%APPDATA%\Margin\settings.json`, so you can also edit them by hand (comments and trailing commas are allowed). Close Margin before editing, then start it again. The example below is shortened: a `sections` list that leaves a zone out leaves it unassigned, so list every zone you want to keep.
+Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows and `~/.config/margin/settings.json` on Linux, so you can also edit them by hand (comments and trailing commas are allowed). The format is the same on both. The example below is shortened: a `sections` list that leaves a zone out leaves it unassigned, so list every zone you want to keep.
 
 ```json
 {
@@ -159,7 +239,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json`, so you can
 
 | Field | Meaning |
 | --- | --- |
-| `activation` | `slideIn` or `press` |
+| `activation` | `slideIn` or `press` (Windows) |
 | `speed` | `slow`, `medium` or `fast` |
 | `edgeDepth`, `cornerSize` | size of the edge strips and corner squares, as a fraction of the touchpad |
 | `entryStrip` | slide-in mode: how close to the edge a finger must first appear |
@@ -173,13 +253,25 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json`, so you can
 <details>
 <summary><b>Nothing happens when I slide or press</b></summary>
 
-- Check that you have a precision touchpad (see [Install](#install)). Touchpads that use an older, non-precision driver don't report finger positions to Windows, so Margin can't read them.
-- Make sure the tray menu shows **On** ticked and the edge or corner is assigned (assigned zones are tinted on the map).
-- Open the tray menu → **Open log**, or run `margin.exe --diag` from a terminal. It prints every touch frame and gesture, which shows whether Margin sees your finger and what it decides.
+- Windows: check that you have a precision touchpad (*Settings → Bluetooth & devices → Touchpad* says "Your PC has a precision touchpad"). Touchpads with an older, non-precision driver don't report finger positions to Windows, so Margin can't read them.
+- Make sure Margin is on (Windows: the tray menu shows **On** ticked) and the edge or corner is assigned (assigned zones are tinted on the map).
+- Windows: tray menu → **Open log**, or run `margin.exe --diag` from a terminal. Linux: `margin --diag`, or `journalctl --user -u margin`. They show whether Margin sees your finger and what it decides.
 </details>
 
 <details>
-<summary><b>Brightness says "not available"</b></summary>
+<summary><b>Linux: "cannot read /dev/input/event…" or "cannot create the virtual keyboard"</b></summary>
+
+Margin lacks the permissions described under [Permissions](#permissions). Run the installer again, or do the manual steps, then **log out and back in**. `id` should list the `input` group, and `ls -l /dev/uinput` should show group `input` with `rw`.
+</details>
+
+<details>
+<summary><b>Linux: keys are sent but nothing happens in some apps</b></summary>
+
+Margin sends real key events through a virtual keyboard, so the app or desktop decides what they do. Brightness and volume use the media keys, so they work if your desktop reacts to those keys. Window and desktop switching depend on your desktop's own shortcuts; set the keys you want under **Custom keys…**.
+</details>
+
+<details>
+<summary><b>Brightness says "not available" (Windows)</b></summary>
 
 Brightness uses Windows' built-in display interface, which only exists for a laptop's own screen. External monitors and most desktop PCs don't have it.
 </details>
@@ -187,19 +279,19 @@ Brightness uses Windows' built-in display interface, which only exists for a lap
 <details>
 <summary><b>Slides start when I only meant to move the pointer</b></summary>
 
-Make the edge smaller with the **Edge size** slider, switch to **Press the edge until it clicks**, or turn that edge off by setting it to *Nothing*.
+Make the edge smaller with the **Edge size** slider, switch to **Press the edge until it clicks** (Windows), or turn that edge off by setting it to *Nothing*.
 </details>
 
 <details>
-<summary><b>It doesn't work in one particular app</b></summary>
+<summary><b>It doesn't work in one particular app (Windows)</b></summary>
 
 Windows doesn't let a normal program send keys to an app that runs **as administrator**. Run Margin as administrator too, or use it with that app closed. Some players use different shortcuts for seeking, so try *Custom keys* for the bottom edge.
 </details>
 
 <details>
-<summary><b>The Record button won't capture Alt+Tab (or Win+…)</b></summary>
+<summary><b>The Record button won't capture Alt+Tab (or Win/Super combos)</b></summary>
 
-Windows handles those combinations before any program sees them. Type the text into the box instead, for example `Alt+Tab`.
+The system handles those combinations before any program sees them. Type the text into the box instead, for example `Alt+Tab`.
 </details>
 
 <details>
@@ -210,44 +302,44 @@ Some vendor touchpad tools (Synaptics, ELAN, Lenovo, ASUS and similar) have thei
 
 ## How it works
 
-- **Touch input:** Raw Input for the HID digitizer usage page `0x0D` / touchpad `0x05`, parsed with `HidP_*` (contact ID, tip switch, X/Y, contact count, button). It keeps working while other windows have focus.
-- **Hiding clicks and freezing the pointer:** a `WH_MOUSE_LL` low-level mouse hook.
-- **Volume, media keys and shortcuts:** `SendInput`.
-- **Brightness:** WMI (`WmiMonitorBrightness` and `WmiSetBrightness`) on a background thread, with its own small on-screen display.
-- **The settings window, tray icon and on-screen display:** plain Win32 with per-monitor DPI awareness. There is no UI framework and no runtime.
+- **Windows:** Raw Input for the HID digitizer usage page `0x0D` / touchpad `0x05`, parsed with `HidP_*`, so it keeps working while other windows have focus. A `WH_MOUSE_LL` hook hides edge clicks and freezes the pointer. `SendInput` sends keys. Brightness goes through WMI on a background thread. The settings window, tray icon and on-screen display are plain Win32 with per-monitor DPI awareness.
+- **Linux:** the touchpad is read from `/dev/input/event*` (evdev multitouch protocol B). Keys, media keys and the zoom wheel are sent through virtual `uinput` devices. A tiny local web server serves the settings page.
+- **Shared:** the settings, the touchpad geometry and the whole gesture engine are the same code on both systems.
 
-No network access, no telemetry. Margin only reads the touchpad and writes your settings and a small log file in `%APPDATA%\Margin`.
+No network access, no telemetry. Margin only reads the touchpad and writes your settings and a small log file.
 
 ## Build and test
 
-```powershell
-cargo build --release      # target\release\margin.exe
-cargo test                 # unit tests: settings, geometry, shortcut parsing, the gesture engine
+```sh
+cargo build --release      # target/release/margin  (margin.exe on Windows)
+cargo test                 # unit tests: settings, geometry, shortcuts, the gesture engine, the evdev parser...
 ```
 
-Tests that use real hardware or the registry are marked `#[ignore]` and run on request:
+Tests that use real hardware or the registry are marked `#[ignore]` and run on request (Windows):
 
 ```powershell
 cargo test brightness_write -- --ignored --nocapture   # nudges the panel by 1 %, reads it back, restores it
 cargo test startup_round_trip -- --ignored             # writes and removes the "start with Windows" value
 ```
 
-Everything runs on the UI thread (raw input, the mouse hook and the windows share one message loop). The gesture logic has no Win32 calls in it, so it is unit-tested without a touchpad.
+On Linux, `tools/linux-e2e.py` runs the real daemon against a **fake touchpad** created through uinput, performs finger gestures and checks the key events that come out (volume, Alt held through a slide, corner presses, settings reload, custom keys). It needs root and a kernel with uinput, and a desktop would also see the fake touchpad, so use a VM, container or WSL:
+
+```sh
+cargo build --release && sudo python3 tools/linux-e2e.py target/release/margin
+```
+
+Everything runs on one thread per program (Windows: one message loop; Linux: one `poll` loop). The gesture logic has no OS calls in it, so it is unit-tested without a touchpad.
 
 | Module | Role |
 | --- | --- |
-| `settings.rs` | settings model and JSON |
-| `geometry.rs` | where each edge and corner sits on the pad |
+| `settings.rs`, `geometry.rs` | settings model and JSON; where each edge and corner sits on the pad |
 | `engine.rs` | the gesture state machine; turns touch frames and clicks into effects (pure, tested) |
-| `touchpad/` | Raw Input and HID parsing; fingers and button state |
-| `hook.rs` | mouse hook: hides edge clicks, freezes the pointer during a slide |
-| `keys.rs`, `actions.rs` | key presses, shortcut parsing, corner click actions |
-| `brightness.rs` | built-in panel brightness through WMI |
-| `hud.rs`, `tray.rs`, `icon_art.rs` | on-screen display, tray icon and menu, the icon artwork |
-| `app.rs` | owns the state and the message loop; runs the engine's effects after the hook returns |
-| `ui/` | the settings window: native controls, touchpad map, shortcut recorder |
+| `keys.rs` | shortcut parsing and key codes; `SendInput` on Windows |
+| `touchpad/evdev.rs`, `touchpad/tracker.rs` | evdev event parser (pure, tested on every OS); fingers and button state |
+| `touchpad/raw.rs`, `hook.rs`, `brightness.rs`, `hud.rs`, `tray.rs`, `ui/`, `app.rs`, ... | Windows: Raw Input, mouse hook, WMI, on-screen display, tray, settings window |
+| `linux/` | Linux: device discovery, daemon loop, uinput output, corner actions, settings web server and page |
 
-`build.rs` embeds the manifest (per-monitor DPI, visual styles), version info and an icon generated from the same drawing code the tray uses. Developer flags: `--diag` (console with every touch frame) and `--hud-demo` / `--hud-demo-seek` (show the on-screen display for a few seconds).
+`build.rs` embeds the Windows manifest (per-monitor DPI, visual styles), version info and an icon generated from the same drawing code the tray uses. A [GitHub Actions workflow](.github/workflows/build.yml) tests on Linux and Windows and builds the release binaries when a `v*` tag is pushed.
 
 Versions up to 0.2.1 were written in C# on .NET 8. That code is still in the git history and in the [v0.2.1 tag](../../tree/v0.2.1); the Rust version reads and writes the same `settings.json`.
 

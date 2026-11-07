@@ -1,36 +1,65 @@
-// Release builds are a GUI app: no console window. `--diag` opens one on demand.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Release builds on Windows are a GUI app: no console window. `--diag` opens one on demand.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod actions;
-mod app;
-mod brightness;
+// Shared by every platform: settings, geometry and the gesture engine have no OS calls in them.
 mod engine;
 mod geometry;
-mod hook;
-mod hud;
-mod icon_art;
 mod keys;
-mod labels;
 mod log;
 mod settings;
-mod startup;
 mod touchpad;
+
+// Windows: Win32 input, tray icon, settings window.
+#[cfg(windows)]
+mod actions;
+#[cfg(windows)]
+mod app;
+#[cfg(windows)]
+mod brightness;
+#[cfg(windows)]
+mod hook;
+#[cfg(windows)]
+mod hud;
+#[cfg(windows)]
+mod icon_art;
+#[cfg(windows)]
+mod labels;
+#[cfg(windows)]
+mod startup;
+#[cfg(windows)]
 mod tray;
+#[cfg(windows)]
 mod ui;
 
-use windows::core::w;
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, WPARAM};
-use windows::Win32::System::Console::AllocConsole;
-use windows::Win32::System::SystemInformation::GetTickCount64;
-use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE};
-use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+// Linux: evdev input, uinput key output, browser-based settings page.
+#[cfg(target_os = "linux")]
+mod linux;
 
-/// Milliseconds since Windows started; the engine's clock.
+/// Milliseconds since the program started; the engine's clock.
 pub fn now_ms() -> u64 {
-    unsafe { GetTickCount64() }
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn main() {
+    #[cfg(windows)]
+    windows_main();
+    #[cfg(target_os = "linux")]
+    linux::main();
+    #[cfg(not(any(windows, target_os = "linux")))]
+    eprintln!("Margin supports Windows and Linux only.");
+}
+
+#[cfg(windows)]
+fn windows_main() {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, WPARAM};
+    use windows::Win32::System::Console::AllocConsole;
+    use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE};
+    use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+
     let diag = std::env::args().any(|a| a.eq_ignore_ascii_case("--diag"));
 
     // Only one Margin runs; launching it again asks the running copy to open its settings.

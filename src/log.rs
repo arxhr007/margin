@@ -79,7 +79,18 @@ fn timestamp() -> String {
         let t = unsafe { GetLocalTime() };
         format!("{:02}:{:02}:{:02}.{:03}", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let secs = now.as_secs() as libc::time_t;
+        // SAFETY: `tm` is plain data and localtime_r only writes into it.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        unsafe { libc::localtime_r(&secs, &mut tm) };
+        format!("{:02}:{:02}:{:02}.{:03}", tm.tm_hour, tm.tm_min, tm.tm_sec, now.subsec_millis())
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         "00:00:00.000".to_string()
     }
