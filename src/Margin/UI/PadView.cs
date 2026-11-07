@@ -3,7 +3,7 @@ using Margin.Touchpad;
 
 namespace Margin.UI;
 
-/// A drawing of the touchpad with its four edges. Click an edge to select it.
+/// A drawing of the touchpad with its eight sections. Click a section to select it.
 /// Fingers currently on the real touchpad are shown as dots, so you can see where the zones are.
 internal sealed class PadView : Control
 {
@@ -27,7 +27,7 @@ internal sealed class PadView : Control
         repaint.Tick += (_, _) => { if (dirty) { dirty = false; Invalidate(); } };
         repaint.Start();
         MinimumSize = new Size(360, 240);
-        AccessibleName = "Touchpad edges";
+        AccessibleName = "Touchpad sections";
     }
 
     private void OnFrame() => dirty = true;
@@ -90,6 +90,7 @@ internal sealed class PadView : Control
 
         using var font = new Font(Font.FontFamily, 8.5f);
         using var bold = new Font(Font.FontFamily, 9f, FontStyle.Bold);
+        using var small = new Font(Font.FontFamily, 7f);
         using var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter };
 
         foreach (var s in Geometry.All)
@@ -112,7 +113,7 @@ internal sealed class PadView : Control
                 g.DrawPath(pen, path);
             }
 
-            var text = Labels.Short(settings[s].Slide);
+            var text = SummaryFor(s);
             if (text.Length > 0)
             {
                 using var brush = new SolidBrush(selected ? Color.FromArgb(0, 50, 110) : Color.FromArgb(40, 40, 45));
@@ -125,7 +126,8 @@ internal sealed class PadView : Control
                     g.RotateTransform(s == Section.Left ? -90 : 90);
                     rc = new RectangleF(-r.Height / 2, -r.Width / 2, r.Height, r.Width);
                 }
-                g.DrawString(text, selected ? bold : font, brush, rc, center);
+                var f = s.IsCorner() ? small : selected ? bold : font;
+                g.DrawString(text, f, brush, rc, center);
                 g.Restore(state);
             }
         }
@@ -140,6 +142,16 @@ internal sealed class PadView : Control
             using var dot = new SolidBrush(Color.FromArgb(200, 255, 140, 0));
             g.FillEllipse(dot, p.X - rad, p.Y - rad, rad * 2, rad * 2);
         }
+    }
+
+    private string SummaryFor(Section s)
+    {
+        var v = settings[s];
+        if (!s.IsCorner()) return Labels.Short(v.Slide);
+        // Corners are small: show the single-click action, plus how many more are set.
+        var used = v.Clicks.Where(c => c.Do != ClickAction.None).ToList();
+        if (used.Count == 0) return "";
+        return used.Count == 1 ? Labels.Short(used[0].Do) : $"{Labels.Short(used[0].Do)} +{used.Count - 1}";
     }
 
     private static GraphicsPath Rounded(RectangleF r, float radius)

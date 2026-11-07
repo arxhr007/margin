@@ -1,14 +1,15 @@
 # Margin
 
-Turn the edges of your Windows touchpad into controls — and choose what each one does.
+Turn the edges and corners of your Windows touchpad into controls — and choose what each one does.
 
-Open the settings, click an edge on the touchpad map, pick an action. That's it.
+Open the settings, click a section on the touchpad map, pick an action. That's it.
 
 | Section | You can assign |
 | --- | --- |
 | **Left / right / top / bottom edge** (slide along it) | Volume · Screen brightness · Seek video/audio · Zoom · Switch tabs · Previous/next track · Switch virtual desktops · Nothing |
+| **Four corners** (1, 2 or 3 clicks) | Mute · Play/pause · Next/previous track · Screenshot · Task View · Show desktop · Lock · Notifications · Open an app · Open a website · Press a shortcut · Run a command · Nothing |
 
-Defaults: left = brightness, right = volume, bottom = seek.
+Defaults: left = volume, right = brightness, top = switch tabs, bottom = switch virtual desktops. Corners: top-left = show desktop, top-right = Task View (1 click) / notifications (2), bottom-left = lock, bottom-right = play/pause (1) / next (2) / previous (3). Slide-in is the default start mode.
 
 ## Two ways to start a slide
 
@@ -17,9 +18,9 @@ Pick one in settings:
 - **Press and slide** — rest a finger on an edge, press until the touchpad clicks, slide without letting go. Hardest to trigger by accident.
 - **Slide in from the edge** — bring a finger in from the laptop body onto the edge, then move along it. No click. A finger that first lands inside the touchpad, or any two-finger contact, never triggers.
 
-Everything outside the assigned edges is a normal touchpad.
+Corners always need a real press; taps are ignored. Everything outside the assigned sections is a normal touchpad.
 
-While sliding, the pointer stays still and nothing is clicked underneath.
+While sliding, the pointer stays still and nothing is clicked underneath. Hold **Ctrl + Shift** for fine steps.
 
 ## Requirements
 

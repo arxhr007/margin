@@ -71,4 +71,55 @@ internal static class SystemKeys
             },
         };
     }
+
+    /// Ctrl and Shift both held → fine steps.
+    public static bool FineModifiersHeld() =>
+        (Native.GetAsyncKeyState(0x11) & 0x8000) != 0 && (Native.GetAsyncKeyState(0x10) & 0x8000) != 0;
+}
+
+internal static class KeyMap
+{
+    private static readonly Dictionary<string, ushort> Codes = Build();
+
+    private static Dictionary<string, ushort> Build()
+    {
+        var d = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase);
+        for (char c = 'a'; c <= 'z'; c++) d[c.ToString()] = (ushort)char.ToUpperInvariant(c);
+        for (char c = '0'; c <= '9'; c++) d[c.ToString()] = c;
+        for (int i = 1; i <= 24; i++) d[$"f{i}"] = (ushort)(0x6F + i);
+        var named = new Dictionary<string, ushort>
+        {
+            ["-"] = 0xBD, ["="] = 0xBB, ["["] = 0xDB, ["]"] = 0xDD, [";"] = 0xBA, ["'"] = 0xDE,
+            [","] = 0xBC, ["."] = 0xBE, ["/"] = 0xBF, ["\\"] = 0xDC, ["`"] = 0xC0,
+            ["return"] = 0x0D, ["enter"] = 0x0D, ["tab"] = 0x09, ["space"] = 0x20,
+            ["backspace"] = 0x08, ["delete"] = 0x2E, ["del"] = 0x2E, ["insert"] = 0x2D,
+            ["escape"] = 0x1B, ["esc"] = 0x1B,
+            ["left"] = 0x25, ["up"] = 0x26, ["right"] = 0x27, ["down"] = 0x28,
+            ["home"] = 0x24, ["end"] = 0x23, ["pageup"] = 0x21, ["pagedown"] = 0x22,
+            ["printscreen"] = 0x2C, ["prtsc"] = 0x2C,
+            ["volumeup"] = SystemKeys.VolumeUp, ["volumedown"] = SystemKeys.VolumeDown, ["mute"] = SystemKeys.VolumeMute,
+            ["playpause"] = SystemKeys.MediaPlayPause, ["nexttrack"] = 0xB0, ["prevtrack"] = 0xB1,
+        };
+        foreach (var (k, v) in named) d[k] = v;
+        return d;
+    }
+
+    public static ushort? Code(string name) => Codes.TryGetValue(name, out var vk) ? vk : null;
+
+    public static List<ushort> Modifiers(IEnumerable<string> names)
+    {
+        var list = new List<ushort>();
+        foreach (var m in names)
+        {
+            switch (m.ToLowerInvariant())
+            {
+                case "ctrl": case "control": case "cmd": case "command": list.Add(0xA2); break; // cmd → ctrl on Windows
+                case "shift": list.Add(0xA0); break;
+                case "alt": case "opt": case "option": list.Add(0xA4); break;
+                case "win": case "windows": case "super": list.Add(0x5B); break;
+                default: Log.Error($"unknown modifier {m}"); break;
+            }
+        }
+        return list;
+    }
 }

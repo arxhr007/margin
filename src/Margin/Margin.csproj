@@ -12,9 +12,9 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>Margin</Product>
-    <Description>Assign controls to the edges of your Windows touchpad</Description>
+    <Description>Assign controls to the edges and corners of your Windows touchpad</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -2,7 +2,7 @@ using Margin.Touchpad;
 
 namespace Margin.UI;
 
-/// The settings window: pick an edge on the touchpad map, then choose what it does.
+/// The settings window: pick a section on the touchpad map, then choose what it does.
 /// Every change applies immediately and is saved.
 internal sealed class SettingsForm : Form
 {
@@ -17,7 +17,7 @@ internal sealed class SettingsForm : Form
         this.settings = settings;
         this.changed = changed;
 
-        Text = "Margin — touchpad edges";
+        Text = "Margin — touchpad edges and corners";
         Icon = icon;
         SuspendLayout();
         // Everything below is laid out in 96-DPI units; WinForms scales it to the screen on load.
@@ -63,20 +63,23 @@ internal sealed class SettingsForm : Form
         root.Controls.Add(detailBox, 1, 1);
 
         // ---- footer: sizes and tip ----
-        var footer = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Margin = new Padding(0, 8, 0, 0) };
-        for (int i = 0; i < 2; i++) footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var footer = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 2, Margin = new Padding(0, 8, 0, 0) };
+        for (int i = 0; i < 4; i++) footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         var edgeSize = new TrackBar { Minimum = 5, Maximum = 25, TickFrequency = 5, Width = 170, Value = Pct(settings.EdgeDepth, 5, 25) };
+        var cornerSize = new TrackBar { Minimum = 8, Maximum = 30, TickFrequency = 2, Width = 170, Value = Pct(settings.CornerSize, 8, 30) };
         footer.Controls.Add(Caption("Edge size"), 0, 0);
         footer.Controls.Add(edgeSize, 1, 0);
+        footer.Controls.Add(Caption("Corner size"), 2, 0);
+        footer.Controls.Add(cornerSize, 3, 0);
         var tip = new Label
         {
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
-            Text = "Click an edge on the touchpad to change it. Orange dots show your fingers.",
+            Text = "Click a section on the touchpad to change it. Orange dots show your fingers. Hold Ctrl + Shift while sliding for fine steps.",
         };
         footer.Controls.Add(tip, 0, 1);
-        footer.SetColumnSpan(tip, 3);
+        footer.SetColumnSpan(tip, 5);
         root.Controls.Add(footer, 0, 2);
         root.SetColumnSpan(footer, 2);
 
@@ -92,6 +95,7 @@ internal sealed class SettingsForm : Form
         speed.SelectedIndexChanged += (_, _) => { settings.Speed = (Speed)speed.SelectedIndex; Changed(); };
         startup.CheckedChanged += (_, _) => Startup.Enabled = startup.Checked;
         edgeSize.ValueChanged += (_, _) => { settings.EdgeDepth = edgeSize.Value / 100.0; Changed(); };
+        cornerSize.ValueChanged += (_, _) => { settings.CornerSize = cornerSize.Value / 100.0; Changed(); };
 
         ResumeLayout(false);
         PerformLayout();
@@ -125,6 +129,14 @@ internal sealed class SettingsForm : Form
         detail.Controls.Clear();
         int width = detail.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6;
 
+        if (s.IsCorner()) BuildCorner(s, width);
+        else BuildEdge(s, width);
+
+        detail.ResumeLayout();
+    }
+
+    private void BuildEdge(Section s, int width)
+    {
         var v = settings[s];
         detail.Controls.Add(Para("Sliding along this edge controls:", width, bold: true));
         var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = width, Margin = new Padding(0, 4, 0, 12) };
@@ -141,8 +153,74 @@ internal sealed class SettingsForm : Form
             : "Bring your finger in from the laptop body onto this edge, then slide along it. No click needed.";
         detail.Controls.Add(Para(direction, width));
         detail.Controls.Add(Para(how, width, gray: true));
+    }
 
-        detail.ResumeLayout();
+    private void BuildCorner(Section s, int width)
+    {
+        var clicks = settings[s].Clicks;
+        detail.Controls.Add(Para("Press this corner until the touchpad clicks:", width, bold: true));
+
+        for (int i = 0; i < 3; i++)
+        {
+            int index = i;
+            detail.Controls.Add(Para(index == 0 ? "1 click" : $"{index + 1} clicks", width, margin: new Padding(0, 10, 0, 2)));
+
+            var current = index < clicks.Count ? clicks[index] : new ClickSpec();
+            var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = width };
+            foreach (var a in Enum.GetValues<ClickAction>()) combo.Items.Add(Labels.Long(a));
+            combo.SelectedIndex = (int)current.Do;
+
+            var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 4, 0, 0) };
+            var value = new TextBox { Width = width - LogicalToDeviceUnits(80), Text = current.Value ?? "" };
+            var browse = new Button { Text = "Browse…", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
+            row.Controls.Add(value);
+            row.Controls.Add(browse);
+
+            void Sync()
+            {
+                var a = (ClickAction)combo.SelectedIndex;
+                row.Visible = Labels.NeedsValue(a);
+                value.PlaceholderText = Labels.Placeholder(a);
+                value.Width = a == ClickAction.App ? width - LogicalToDeviceUnits(80) : width;
+                browse.Visible = a == ClickAction.App;
+                bool bad = a == ClickAction.Keys && value.Text.Length > 0 && !ActionRunner.TryParseShortcut(value.Text, out _, out _);
+                value.BackColor = bad ? Color.FromArgb(255, 228, 228) : SystemColors.Window;
+            }
+
+            ClickSpec Slot()
+            {
+                while (clicks.Count <= index) clicks.Add(new ClickSpec());
+                return clicks[index];
+            }
+
+            combo.SelectedIndexChanged += (_, _) =>
+            {
+                var spec = Slot();
+                spec.Do = (ClickAction)combo.SelectedIndex;
+                if (!Labels.NeedsValue(spec.Do)) spec.Value = null;
+                else if (value.Text.Length > 0) spec.Value = value.Text;
+                Sync();
+                Changed();
+            };
+            value.TextChanged += (_, _) =>
+            {
+                Slot().Value = value.Text.Length > 0 ? value.Text : null;
+                Sync();
+                Changed();
+            };
+            browse.Click += (_, _) =>
+            {
+                using var dlg = new OpenFileDialog { Filter = "Programs|*.exe;*.lnk|All files|*.*", Title = "Choose an app" };
+                if (dlg.ShowDialog(this) == DialogResult.OK) value.Text = dlg.FileName;
+            };
+
+            detail.Controls.Add(combo);
+            detail.Controls.Add(row);
+            Sync();
+        }
+
+        detail.Controls.Add(Para("Corners react only to a real press, never to a tap. Unused corners stay normal touchpad.", width,
+            gray: true, margin: new Padding(0, 14, 0, 0)));
     }
 
     private static Label Para(string text, int width, bool bold = false, bool gray = false, Padding? margin = null)

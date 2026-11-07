@@ -4,19 +4,21 @@ using Margin.Touchpad;
 
 namespace Margin;
 
-/// Turns touchpad frames and clicks into edge actions.
+/// Turns touchpad frames and clicks into section actions.
 ///
-/// Two ways to start (user's choice):
+/// Edges, two ways to start (user's choice):
 ///   Press   — one finger rests in an assigned edge, the touchpad is physically clicked, then the finger
 ///             slides while held. The click and the drag are hidden from apps.
 ///   SlideIn — one finger first appears in the thin outer strip of an assigned edge (it came in from the
 ///             laptop body), then moves mostly along the edge within a short window. No click needed.
 ///             Fingers born anywhere else, or any multi-finger contact, are ignored until all fingers lift.
+/// Corners always need a physical click; 1–3 quick clicks pick the action.
 /// While a slide runs the pointer is frozen and travel along the edge is turned into steps.
 internal sealed class GestureEngine
 {
     private const long IntentWindowMs = 600;
     private const float IntentTravel = 0.03f;
+    private const int MultiClickMs = 300;
 
     private sealed class Run
     {
@@ -39,12 +41,16 @@ internal sealed class GestureEngine
     private readonly Hud hud;
     private readonly Brightness brightness;
     private readonly SynchronizationContext ui;
+    private readonly System.Windows.Forms.Timer clickTimer = new() { Interval = MultiClickMs };
     private readonly HashSet<int> ignoredFingers = new();
 
     private Run? run;
     private Candidate? candidate;
     private bool multiFingerSeen;
     private bool holdingClick;
+    private Section? pressedCorner;
+    private Section? clickCorner;
+    private int clickCount;
 
     public Settings Settings { get; set; } = new();
 
@@ -57,6 +63,7 @@ internal sealed class GestureEngine
         this.hud = hud;
         this.brightness = brightness;
         ui = SynchronizationContext.Current ?? throw new InvalidOperationException("create on the UI thread");
+        clickTimer.Tick += (_, _) => FinishClicks();
         touches.Frame += OnFrame;
     }
 
@@ -165,15 +172,16 @@ internal sealed class GestureEngine
 
     private void Perform(SlideAction action, int delta, int total)
     {
+        bool fine = SystemKeys.FineModifiersHeld();
         int n = Math.Abs(delta);
         bool forward = delta > 0;
         switch (action)
         {
             case SlideAction.Volume:
-                Post(() => SystemKeys.Tap(forward ? SystemKeys.VolumeUp : SystemKeys.VolumeDown, n * 2));
+                Post(() => SystemKeys.Tap(forward ? SystemKeys.VolumeUp : SystemKeys.VolumeDown, n * (fine ? 1 : 2)));
                 break;
             case SlideAction.Brightness:
-                int change = delta * 5;
+                int change = delta * (fine ? 1 : 5);
                 Post(() =>
                 {
                     int value = brightness.Nudge(change);
@@ -223,10 +231,11 @@ internal sealed class GestureEngine
         {
             Log.Info("button-up was lost, clearing stale click");
             holdingClick = false;
+            pressedCorner = null;
         }
         if (!Settings.Enabled) return false;
 
-        // A click during a slide is part of the gesture.
+        // A click during a slide-in run is part of the gesture.
         if (run != null)
         {
             holdingClick = true;
@@ -238,12 +247,18 @@ internal sealed class GestureEngine
         var fingers = touches.Snapshot();
         if (fingers.Count != 1) return false;
         var f = fingers[0];
-        if (ignoredFingers.Contains(f.Id)) return false;
         if (Geometry.Hit(f.Start, Settings) is not { } s || Geometry.Hit(f.Current, Settings) != s) return false;
         if (!Geometry.IsAssigned(s, Settings)) return false;
-        if (Settings.Activation != Activation.Press) return false;
 
-        Start(s, f, fromPress: true);
+        if (s.IsCorner())
+        {
+            pressedCorner = s;
+        }
+        else
+        {
+            if (Settings.Activation != Activation.Press) return false;
+            Start(s, f, fromPress: true);
+        }
         holdingClick = true;
         return true;
     }
@@ -253,6 +268,11 @@ internal sealed class GestureEngine
         if (!holdingClick) return;
         holdingClick = false;
         if (run is { FromPress: true }) Stop();
+        if (pressedCorner is { } corner)
+        {
+            pressedCorner = null;
+            CountClick(corner);
+        }
     }
 
     public void Reset()
@@ -260,5 +280,32 @@ internal sealed class GestureEngine
         Stop();
         candidate = null;
         holdingClick = false;
+        pressedCorner = null;
+    }
+
+    private void CountClick(Section corner)
+    {
+        if (clickCorner != corner) clickCount = 0;
+        clickCorner = corner;
+        clickCount++;
+        clickTimer.Stop();
+
+        var clicks = Settings[corner].Clicks;
+        int last = clicks.FindLastIndex(c => c.Do != ClickAction.None) + 1;
+        if (clickCount >= last) Post(FinishClicks); // no longer combination to wait for
+        else clickTimer.Start();
+    }
+
+    private void FinishClicks()
+    {
+        clickTimer.Stop();
+        if (clickCorner is not { } corner) return;
+        int count = clickCount;
+        clickCorner = null;
+        clickCount = 0;
+        var clicks = Settings[corner].Clicks;
+        if (count < 1 || count > clicks.Count || clicks[count - 1].Do == ClickAction.None) return;
+        Log.Debug($"{corner} x{count} -> {clicks[count - 1].Do}");
+        ActionRunner.Run(clicks[count - 1]);
     }
 }
