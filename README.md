@@ -83,7 +83,7 @@ cargo build --release     # target/release/margin  (margin.exe on Windows)
 
 ## Contents
 
-[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [Code signing policy](#code-signing-policy) · [License](#license)
+[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [Code signing policy](#code-signing-policy) · [Contributing](#contributing) · [License](#license)
 
 ## Screenshots
 
@@ -360,6 +360,10 @@ Windows releases are built from this repository by the [release workflow](.githu
 - Approvers: [arxhr007](https://github.com/arxhr007)
 
 Privacy: this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
+## Contributing
+
+Bug reports from real laptops help most, since touchpads differ a lot. See [CONTRIBUTING.md](CONTRIBUTING.md) for what to include in a report and how to build, test and send changes. Everyone taking part is expected to follow the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
