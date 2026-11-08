@@ -83,7 +83,7 @@ cargo build --release     # target/release/margin  (margin.exe on Windows)
 
 ## Contents
 
-[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [License](#license)
+[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [Code signing policy](#code-signing-policy) · [License](#license)
 
 ## Screenshots
 
@@ -349,6 +349,17 @@ Margin is not the only app that uses touchpad edges. If it doesn't fit your need
 
 - [Brim](https://github.com/joelgjojo/brim): edge controls for the Mac trackpad, with a Windows beta.
 - [EdgeSlide](https://github.com/puttingpixelstogether-ops/edgeslide): Windows tray app that turns the left and right touchpad edges into brightness and volume sliders.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+Windows releases are built from this repository by the [release workflow](.github/workflows/build.yml) and signed there; nothing is signed by hand. Setup and checks are in [docs/signing.md](docs/signing.md).
+
+- Committers and reviewers: [arxhr007](https://github.com/arxhr007)
+- Approvers: [arxhr007](https://github.com/arxhr007)
+
+Privacy: this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
 
 ## License
 

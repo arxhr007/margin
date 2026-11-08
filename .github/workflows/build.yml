@@ -29,11 +29,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo build --release --locked
+
+      # Code signing through SignPath (free for open source, certificate by SignPath Foundation).
+      # It switches on once the repository variable SIGNPATH_ORGANIZATION_ID and the secret
+      # SIGNPATH_API_TOKEN exist; until then releases are built unsigned. See docs/signing.md.
+      - name: upload the unsigned exe for signing
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: target/release/margin.exe
+      - name: sign with SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'margin' }}
+          # release tags go through release signing (an approver confirms each request in SignPath);
+          # manual runs from the Actions tab use test signing
+          signing-policy-slug: ${{ startsWith(github.ref, 'refs/tags/v') && 'release-signing' || 'test-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
       - name: package
         shell: pwsh
         run: |
           New-Item -ItemType Directory dist | Out-Null
-          Copy-Item target\release\margin.exe dist\margin.exe
+          $exe = if (Test-Path signed\margin.exe) { 'signed\margin.exe' } else { 'target\release\margin.exe' }
+          Copy-Item $exe dist\margin.exe
+          $sig = Get-AuthenticodeSignature dist\margin.exe
+          Write-Host "signature: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ('${{ vars.SIGNPATH_ORGANIZATION_ID }}' -and $sig.Status -eq 'NotSigned') { throw 'signing is configured but margin.exe came back unsigned' }
           $hash = (Get-FileHash dist\margin.exe -Algorithm SHA256).Hash.ToLower()
           [IO.File]::WriteAllText("dist/margin.exe.sha256", "$hash  margin.exe`n")
       - uses: actions/upload-artifact@v4
