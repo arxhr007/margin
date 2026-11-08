@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for Margin.
+  The build uploads target/release/margin.exe as a GitHub artifact, which arrives at SignPath as a
+  zip file; this signs the one executable inside it with Authenticode.
+  Paste this into the project's artifact configuration in the SignPath web app (see docs/signing.md).
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="margin.exe" product-name="Margin">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
