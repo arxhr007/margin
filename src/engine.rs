@@ -366,6 +366,10 @@ impl Engine {
     }
 
     fn count_click(&mut self, corner: Section, st: &Settings) {
+        if self.click_corner.is_some_and(|c| c != corner) {
+            // Another corner is still waiting for a possible next click: its clicks are final now.
+            self.finish_clicks(st);
+        }
         if self.click_corner != Some(corner) {
             self.click_count = 0;
         }
@@ -835,13 +839,27 @@ mod tests {
     #[test]
     fn clicks_on_a_different_corner_restart_the_count() {
         let mut r = Rig::new();
-        assert!(press(&mut r, (0.95, 0.05))); // bottom-right once
+        assert!(press(&mut r, (0.95, 0.05))); // bottom-right once: waits for a second or third click
         release(&mut r);
         r.fx();
         assert!(press(&mut r, (0.05, 0.05))); // bottom-left (lock): count restarts at 1
         release(&mut r);
-        let fx = r.fx();
-        assert!(fx.contains(&Effect::RunClick(ClickSpec { action: ClickAction::Lock, value: None })));
+        let runs: Vec<_> = r.fx().into_iter().filter_map(|e| if let Effect::RunClick(c) = e { Some(c.action) } else { None }).collect();
+        // the bottom-right single click is not lost: it runs first, then the lock
+        assert_eq!(runs, vec![ClickAction::PlayPause, ClickAction::Lock]);
+    }
+
+    #[test]
+    fn switching_corners_twice_runs_each_pending_click_once() {
+        let mut r = Rig::new();
+        assert!(press(&mut r, (0.95, 0.95))); // top-right once (task view, waits for notifications)
+        release(&mut r);
+        assert!(press(&mut r, (0.95, 0.05))); // bottom-right once (play, waits)
+        release(&mut r);
+        r.engine.click_timer_fired(&r.st);
+        r.engine.click_timer_fired(&r.st); // a stale second timer must not run anything again
+        let runs: Vec<_> = r.fx().into_iter().filter_map(|e| if let Effect::RunClick(c) = e { Some(c.action) } else { None }).collect();
+        assert_eq!(runs, vec![ClickAction::TaskView, ClickAction::PlayPause]);
     }
 
     #[test]
