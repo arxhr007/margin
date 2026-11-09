@@ -67,7 +67,7 @@ Write commit messages that say what changed and why, in plain sentences.
 
 ## Releases
 
-Releases are made by the maintainer: pushing a `v*` tag runs the [release workflow](.github/workflows/build.yml), which tests, builds and publishes the binaries with checksums. Windows builds are signed as described in the [code signing policy](README.md#code-signing-policy).
+Releases are automatic. When a change to `version` in `Cargo.toml` lands on `main`, the [build workflow](.github/workflows/build.yml) tests, builds, creates the `v<version>` tag and publishes the release with the binaries and their checksums. Every other push and pull request only runs the tests. To release, the maintainer bumps the version (and `Cargo.lock`, which `cargo build` updates) in its own commit. Windows builds are signed as described in the [code signing policy](README.md#code-signing-policy).
 
 ## License
 

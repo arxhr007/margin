@@ -339,7 +339,7 @@ Everything runs on one thread per program (Windows: one message loop; Linux: one
 | `touchpad/raw.rs`, `hook.rs`, `brightness.rs`, `hud.rs`, `tray.rs`, `ui/`, `app.rs`, ... | Windows: Raw Input, mouse hook, WMI, on-screen display, tray, settings window |
 | `linux/` | Linux: device discovery, daemon loop, uinput output, corner actions, settings web server and page |
 
-`build.rs` embeds the Windows manifest (per-monitor DPI, visual styles), version info and an icon generated from the same drawing code the tray uses. A [GitHub Actions workflow](.github/workflows/build.yml) tests on Linux and Windows and builds the release binaries (including Linux arm64) when a `v*` tag is pushed.
+`build.rs` embeds the Windows manifest (per-monitor DPI, visual styles), version info and an icon generated from the same drawing code the tray uses. A [GitHub Actions workflow](.github/workflows/build.yml) tests on Linux and Windows for every push and pull request. When `version` in `Cargo.toml` changes on `main`, it also builds the release binaries (including Linux arm64), tags the version and publishes the release.
 
 Versions up to 0.2.1 were written in C# on .NET 8. That code is still in the git history and in the [v0.2.1 tag](../../tree/v0.2.1); the Rust version reads and writes the same `settings.json`.
 
