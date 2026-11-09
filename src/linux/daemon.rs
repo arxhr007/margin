@@ -2,9 +2,7 @@
 //! Runs as a systemd user service, or in a terminal with `margin run` / `margin --diag`.
 
 use std::os::raw::c_int;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::UNIX_EPOCH;
 
 use super::actions;
 use super::devices::{self, Probe, Touchpad};
@@ -37,14 +35,6 @@ impl Env for LinuxEnv {
 fn prepared(mut s: Settings) -> Settings {
     s.activation = Activation::SlideIn;
     s
-}
-
-fn modified(path: &PathBuf) -> u64 {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// Only one Margin per user: a lock file that disappears with the process.
@@ -160,7 +150,14 @@ impl Daemon {
     }
 
     fn reload_settings(&mut self) {
-        self.settings = prepared(settings::load());
+        match settings::read() {
+            Ok(Some(new)) => self.settings = prepared(new),
+            Ok(None) => return, // deleted: keep going with what we have
+            Err(e) => {
+                crate::log::error(format!("{e}; keeping the current settings"));
+                return;
+            }
+        }
         self.engine.reset(); // also lets go of any key held for a slide
         self.after_engine();
         crate::log::info("settings reloaded");
@@ -200,8 +197,7 @@ pub fn run(diag: bool) {
     if !settings::exists() {
         settings::save(&Settings::default());
     }
-    let settings_file = settings::file_path();
-    let mut seen = modified(&settings_file);
+    let mut seen = settings::modified_ms();
 
     // SAFETY: the handler only stores to an atomic.
     unsafe {
@@ -238,7 +234,7 @@ pub fn run(diag: bool) {
         }
         if now.saturating_sub(last_cfg) >= 1000 {
             last_cfg = now;
-            let m = modified(&settings_file);
+            let m = settings::modified_ms();
             if m != seen {
                 seen = m;
                 d.reload_settings();

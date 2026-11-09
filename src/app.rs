@@ -24,7 +24,10 @@ pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 3;
 
 const TIMER_CLICK: usize = 1;
 const TIMER_SAVE: usize = 2;
+const TIMER_WATCH: usize = 3;
 const SAVE_DELAY_MS: u32 = 400;
+/// How often settings.json is checked for changes made outside Margin (by hand, or a synced copy).
+const WATCH_MS: u32 = 1000;
 
 pub const CMD_SETTINGS: usize = 1;
 pub const CMD_TOGGLE: usize = 2;
@@ -106,6 +109,10 @@ thread_local! {
     static MAIN: Cell<isize> = const { Cell::new(0) };
     static BRIGHTNESS: RefCell<Option<brightness::Brightness>> = const { RefCell::new(None) };
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
+    /// The settings were edited in Margin and not written yet.
+    static UNSAVED: Cell<bool> = const { Cell::new(false) };
+    /// settings.json's modification time when Margin last read or wrote it.
+    static SEEN: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Runs `f` on the app state. Returns None if the state is already borrowed (a re-entrant message).
@@ -173,7 +180,43 @@ pub fn settings_changed() {
     })
     .unwrap_or(true);
     tray::set_tip(main_hwnd(), if enabled { "Margin" } else { "Margin (off)" });
+    UNSAVED.with(|u| u.set(true));
     unsafe { SetTimer(main_hwnd(), TIMER_SAVE, SAVE_DELAY_MS, None) };
+}
+
+/// Writes the settings if they were edited since the last save. Nothing else writes settings.json, so a
+/// file Margin couldn't read (and replaced with the defaults in memory) is left alone until the user
+/// changes something.
+fn save_if_edited() {
+    if !UNSAVED.with(|u| u.replace(false)) {
+        return;
+    }
+    with(|s| settings::save(&s.settings));
+    SEEN.with(|m| m.set(settings::modified_ms()));
+}
+
+/// settings.json changed outside Margin: apply it, like the Linux version does.
+fn check_settings_file() {
+    let modified = settings::modified_ms();
+    if modified == 0 || modified == SEEN.with(|m| m.get()) || UNSAVED.with(|u| u.get()) {
+        return; // no file, nothing new, or an edit of ours is about to be written anyway
+    }
+    SEEN.with(|m| m.set(modified));
+    match settings::read() {
+        Ok(Some(new)) => {
+            let enabled = new.enabled;
+            with(|s| {
+                s.settings = new;
+                s.engine.reset(); // also lets go of any key held for a slide
+                s.engine_done();
+            });
+            tray::set_tip(main_hwnd(), if enabled { "Margin" } else { "Margin (off)" });
+            ui::settings_window::reload();
+            crate::log::info("settings.json changed, settings reloaded");
+        }
+        Ok(None) => {}
+        Err(e) => crate::log::error(format!("{e}; keeping the current settings")),
+    }
 }
 
 pub fn touchpad_name() -> Option<String> {
@@ -228,6 +271,7 @@ fn run_effect(effect: Effect) {
 /// Creates the hidden window that owns input, tray and timers, and runs the message loop.
 pub fn run(first_run: bool) -> i32 {
     let settings = settings::load();
+    SEEN.with(|m| m.set(settings::modified_ms()));
     STATE.with(|c| *c.borrow_mut() = Some(State::new(settings)));
     BRIGHTNESS.with(|b| *b.borrow_mut() = Some(brightness::Brightness::new()));
 
@@ -282,6 +326,7 @@ pub fn run(first_run: bool) -> i32 {
     hook::install();
     let _ = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) };
     tray::add(hwnd);
+    unsafe { SetTimer(hwnd, TIMER_WATCH, WATCH_MS, None) };
 
     crate::log::info(format!("Margin {} started", env!("CARGO_PKG_VERSION")));
     if first_run {
@@ -307,12 +352,13 @@ pub fn run(first_run: bool) -> i32 {
 fn shutdown(hwnd: HWND) {
     unsafe {
         let _ = KillTimer(hwnd, TIMER_SAVE);
+        let _ = KillTimer(hwnd, TIMER_WATCH);
     }
     with(|s| {
         s.engine.reset(); // releases any held keys
         s.engine_done();
-        settings::save(&s.settings);
     });
+    save_if_edited();
     flush();
     hook::uninstall();
     tray::remove(hwnd);
@@ -365,8 +411,9 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             }
             TIMER_SAVE => {
                 let _ = KillTimer(hwnd, TIMER_SAVE);
-                with(|s| settings::save(&s.settings));
+                save_if_edited();
             }
+            TIMER_WATCH => check_settings_file(),
             _ => {}
         },
         WM_APP_TRAY => match (lparam.0 & 0xFFFF) as u32 {

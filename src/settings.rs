@@ -319,15 +319,63 @@ pub fn exists() -> bool {
 }
 
 pub fn load() -> Settings {
-    let mut settings = match std::fs::read_to_string(file_path()) {
-        Ok(text) => parse(&text).unwrap_or_else(|e| {
-            crate::log::error(format!("settings.json unreadable, using defaults: {e}"));
-            Settings::default()
-        }),
-        Err(_) => Settings::default(),
+    match read() {
+        Ok(Some(settings)) => settings,
+        Ok(None) => {
+            let mut settings = Settings::default();
+            settings.normalize();
+            settings
+        }
+        Err(e) => {
+            crate::log::error(format!("{e}; using the defaults until it is fixed"));
+            let mut settings = Settings::default();
+            settings.normalize();
+            settings
+        }
+    }
+}
+
+/// Reads settings.json: `Ok(None)` when there is no file yet. When the file can't be parsed, a copy is
+/// kept next to it as `settings.json.broken`, so a later save can't lose what the user wrote.
+pub fn read() -> Result<Option<Settings>, String> {
+    read_from(&file_path())
+}
+
+fn read_from(path: &std::path::Path) -> Result<Option<Settings>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
     };
-    settings.normalize();
-    settings
+    match parse(&text) {
+        Ok(mut settings) => {
+            settings.normalize();
+            Ok(Some(settings))
+        }
+        Err(e) => {
+            let copy = broken_copy_path(path);
+            let kept = match std::fs::write(&copy, &text) {
+                Ok(()) => format!(" (a copy is kept as {})", copy.display()),
+                Err(_) => String::new(),
+            };
+            Err(format!("{} has an error: {e}{kept}", path.display()))
+        }
+    }
+}
+
+fn broken_copy_path(path: &std::path::Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".broken");
+    path.with_file_name(name)
+}
+
+/// When settings.json last changed, in milliseconds since 1970; 0 if it doesn't exist.
+pub fn modified_ms() -> u64 {
+    std::fs::metadata(file_path())
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// Saves the settings, reporting any error to the caller.
@@ -539,5 +587,43 @@ mod tests {
         for (i, a) in ClickAction::ALL.iter().enumerate() {
             assert_eq!(*a as usize, i);
         }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("margin-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_missing_file_is_not_an_error() {
+        let dir = temp_dir("missing");
+        assert!(matches!(read_from(&dir.join("settings.json")), Ok(None)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_broken_file_is_reported_and_kept() {
+        let dir = temp_dir("broken");
+        let path = dir.join("settings.json");
+        let text = "{ \"enabled\": true, \"speed\": \"medium\" \"oops\" }";
+        std::fs::write(&path, text).unwrap();
+        let err = read_from(&path).unwrap_err();
+        assert!(err.contains("has an error"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("settings.json.broken")).unwrap(), text);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "the file itself is left alone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_good_file_is_read_and_normalized() {
+        let dir = temp_dir("good");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, CSHARP_FILE).unwrap();
+        let s = read_from(&path).unwrap().unwrap();
+        assert_eq!(s.activation, Activation::SlideIn);
+        assert!(!dir.join("settings.json.broken").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

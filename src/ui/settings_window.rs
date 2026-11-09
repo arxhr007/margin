@@ -135,6 +135,29 @@ pub fn show() {
     create();
 }
 
+/// The settings were replaced from settings.json: show the new values if the window is open.
+pub fn reload() {
+    let Some((hwnd, enabled, activation, speed, edge_trk, corner_trk, pad)) =
+        ui(|u| (u.hwnd, u.enabled, u.activation, u.speed, u.edge_trk, u.corner_trk, u.pad))
+    else {
+        return;
+    };
+    let st = app::read_settings(|s| s.clone()).unwrap_or_default();
+    let pct = |f: f64, lo: i32, hi: i32| ((f * 100.0).round() as i32).clamp(lo, hi);
+    end_recording(); // the box being recorded into is about to be rebuilt
+    LOADING.with(|l| l.set(true));
+    unsafe {
+        SendMessageW(activation, CB_SETCURSEL, WPARAM(if st.activation == Activation::SlideIn { 1 } else { 0 }), LPARAM(0));
+        SendMessageW(speed, CB_SETCURSEL, WPARAM(st.speed as usize), LPARAM(0));
+        SendMessageW(enabled, BM_SETCHECK, WPARAM(st.enabled as usize), LPARAM(0));
+        SendMessageW(edge_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.edge_depth, 5, 25) as isize));
+        SendMessageW(corner_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.corner_size, 8, 30) as isize));
+        let _ = InvalidateRect(pad, None, false);
+    }
+    LOADING.with(|l| l.set(false));
+    post_rebuild(hwnd); // the section editor reads the new settings when it is rebuilt
+}
+
 /// Lets the dialog manager handle Tab / arrow keys for the window's controls.
 pub fn pre_translate(msg: &MSG) -> bool {
     if RECORDING.with(|r| r.get()) != 0 {
