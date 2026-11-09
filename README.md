@@ -207,7 +207,7 @@ sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trig
 
 ## Settings file
 
-Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows and `~/.config/margin/settings.json` on Linux, so you can also edit them by hand (comments and trailing commas are allowed). The format is the same on both. The example below is shortened: a `sections` list that leaves a zone out leaves it unassigned, so list every zone you want to keep.
+Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows and `~/.config/margin/settings.json` on Linux, so you can also edit them by hand (comments and trailing commas are allowed). The running program applies a saved change within a second. If the file has a mistake, Margin writes the error to its log, keeps a copy of your file as `settings.json.broken`, and carries on with the settings it already had (the defaults, if it was just starting). It won't write over your file until you change something in Margin. The format is the same on both. The example below is shortened: a `sections` list that leaves a zone out leaves it unassigned, so list every zone you want to keep.
 
 ```json
 {
