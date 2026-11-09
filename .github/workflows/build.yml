@@ -1,16 +1,60 @@
 name: build
 
-# Runs when a release tag (v*) is pushed, or by hand from the Actions tab.
+# Releases are automatic: change `version` in Cargo.toml on main and this workflow tests, builds,
+# tags v<version> and publishes the release. Other pushes to main and pull requests only run the
+# tests. Pushing a v* tag by hand still releases that tag, and a run from the Actions tab builds
+# test binaries without releasing.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
-# "contents: write" lets the release job attach the binaries to a GitHub release.
+# "contents: write" lets the release job create the tag and the GitHub release.
 permissions:
   contents: write
 
+# Two pushes in a row never build the same ref at once, so a version is released only once.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    name: decide whether to release
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      build: ${{ steps.plan.outputs.build }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          [ -n "$version" ] || { echo "no version in Cargo.toml"; exit 1; }
+          tag="v$version"
+          release=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            # a hand-pushed tag must match Cargo.toml, or the binaries would report another version
+            [ "$GITHUB_REF_NAME" = "$tag" ] || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml ($tag)"; exit 1; }
+            release=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "$tag already exists: tests only"
+            else
+              echo "Cargo.toml is at $version and $tag doesn't exist yet: releasing"
+              release=true
+            fi
+          fi
+          build=$release
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then build=true; fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version $version: release=$release, build=$build" >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -24,7 +68,8 @@ jobs:
 
   windows:
     name: build (windows x86_64)
-    needs: test
+    needs: [plan, test]
+    if: needs.plan.outputs.build == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,9 +92,9 @@ jobs:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'margin' }}
-          # release tags go through release signing (an approver confirms each request in SignPath);
+          # releases go through release signing (an approver confirms each request in SignPath);
           # manual runs from the Actions tab use test signing
-          signing-policy-slug: ${{ startsWith(github.ref, 'refs/tags/v') && 'release-signing' || 'test-signing' }}
+          signing-policy-slug: ${{ needs.plan.outputs.release == 'true' && 'release-signing' || 'test-signing' }}
           github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 3600
@@ -73,7 +118,8 @@ jobs:
 
   linux:
     name: build (linux ${{ matrix.arch }})
-    needs: test
+    needs: [plan, test]
+    if: needs.plan.outputs.build == 'true'
     runs-on: ${{ matrix.runner }}
     # the arm64 runner is newer; if it is unavailable the x86_64 release still goes out
     continue-on-error: ${{ matrix.arch == 'aarch64' }}
@@ -100,20 +146,23 @@ jobs:
           path: dist/*
 
   release:
-    name: attach to the release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux]
+    name: publish the release
+    needs: [plan, windows, linux]
+    # the linux job counts as a success even when only arm64 failed (continue-on-error above)
+    if: ${{ !cancelled() && needs.plan.outputs.release == 'true' && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: create the release if needed, then upload the binaries
+      - name: create the tag and release if needed, then upload the binaries
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
           ls -l dist
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Margin $GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          # On a push to main this creates the tag at the commit that was tested and built.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Margin $TAG" --generate-notes
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber

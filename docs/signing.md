@@ -25,9 +25,9 @@ is set up. Until then it builds unsigned releases exactly as before.
 3. **In this repository** (Settings → Secrets and variables → Actions):
    - Secret `SIGNPATH_API_TOKEN`: the API token.
    - Variable `SIGNPATH_ORGANIZATION_ID`: your SignPath organization ID.
-4. **Test it**: run the workflow by hand from the Actions tab (it uses `test-signing`), then push a
-   `v*` tag for a real release. Release signing waits up to an hour for an approver to confirm the
-   request in SignPath.
+4. **Test it**: run the workflow by hand from the Actions tab (it uses `test-signing`), then bump
+   `version` in `Cargo.toml` on `main` for a real release. Release signing waits up to an hour for
+   an approver to confirm the request in SignPath.
 
 ## Checking a release
 
