@@ -27,8 +27,10 @@ pub const MULTI_CLICK_MS: u32 = 300;
 pub const HOLD_MS: u32 = 500;
 /// Scroll sends the wheel movement as soon as the finger has moved this many wheel units
 /// (120 = one notch). Small enough to look continuous, big enough that a resting finger's
-/// sensor noise doesn't make the page shiver.
-const SCROLL_MIN_UNITS: i32 = 8;
+/// sensor noise doesn't make the page shiver. Edge (and Chrome) can sit still for a third of a
+/// second when a scroll starts with pieces of about 10 units, then catch up after the finger
+/// lifts; from 20 units up they follow at once.
+const SCROLL_MIN_UNITS: i32 = 20;
 
 /// What the engine needs from the outside world.
 pub trait Env {
@@ -712,8 +714,10 @@ mod tests {
         r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
         slide_right_edge(&mut r, 0.63); // 0.09 up, 120 units per 0.042: about 257
         assert!(matches!(r.fx()[..], [Effect::Wheel { units: 250..=260, horizontal: false }]));
-        r.frame(&[(1, 0.99, 0.635)]); // a little more: a small piece, not a whole step
-        assert!(matches!(r.fx()[..], [Effect::Wheel { units: 8..=20, horizontal: false }]));
+        r.frame(&[(1, 0.99, 0.635)]); // a tiny bit more: waits until it adds up to a piece
+        assert_eq!(r.fx(), vec![]);
+        r.frame(&[(1, 0.99, 0.64)]); // a little more: a small piece, not a whole step
+        assert!(matches!(r.fx()[..], [Effect::Wheel { units: 20..=40, horizontal: false }]));
         r.frame(&[(1, 0.99, 0.50)]); // back down past the start
         assert!(matches!(r.fx()[..], [Effect::Wheel { units, horizontal: false }] if units < 0));
     }
