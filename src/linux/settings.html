@@ -92,7 +92,7 @@ const NAMES = { left: "Left edge", right: "Right edge", top: "Top edge", bottom:
 const SLIDES = [
   ["off", "Nothing (normal touchpad)", ""], ["volume", "Volume", "Volume"], ["brightness", "Screen brightness", "Brightness"],
   ["seek", "Seek video / audio", "Seek"], ["zoom", "Zoom in / out", "Zoom"], ["tabs", "Switch windows (Alt+Tab)", "Windows"],
-  ["tracks", "Previous / next track", "Tracks"], ["desktops", "Switch virtual desktops (Ctrl+Super+arrows)", "Desktops"], ["custom", "Custom keys…", "Keys"],
+  ["tracks", "Previous / next track", "Tracks"], ["desktops", "Switch virtual desktops (Ctrl+Super+arrows)", "Desktops"], ["custom", "Custom keys…", "Keys"], ["scroll", "Scroll (like a scroll bar)", "Scroll"],
 ];
 const CLICKS = [
   ["none", "Nothing", ""], ["mute", "Mute / unmute", "Mute"], ["playPause", "Play / pause", "Play"], ["nextTrack", "Next track", "Next"],
@@ -204,7 +204,11 @@ function renderEditor() {
       h += `<label class="inline"><input type="checkbox" id="hold"${s.holdModifiers ? " checked" : ""}> Hold shared modifiers while sliding</label>`;
       h += `<p class="hint">Click Record, then press the keys. Your desktop keeps some combos (Alt+Tab, Super+…) to itself, so type those instead, like Alt+Tab or Ctrl+Super+Right. Each step of the slide presses the shortcut once. "Hold shared modifiers" keeps Alt down until you lift your finger, like holding Alt while pressing Tab.</p>`;
     }
-    h += `<p class="hint">${selected === "left" || selected === "right" ? "Slide up for more / next, down for less / previous." : "Slide right for forward / next, left for back / previous."}</p>`;
+    const vertical = selected === "left" || selected === "right";
+    const direction = s.slide === "scroll"
+      ? (vertical ? "Slide up to scroll up, down to scroll down, like dragging a scroll bar. The window under the pointer scrolls." : "Slide right to scroll right, left to scroll left. The window under the pointer scrolls.")
+      : (vertical ? "Slide up for more / next, down for less / previous." : "Slide right for forward / next, left for back / previous.");
+    h += `<p class="hint">${direction}</p>`;
   } else {
     h += `<p class="field"><span>Press this corner until the touchpad clicks:</span></p>`;
     for (let i = 0; i <= HOLD_SLOT; i++) {

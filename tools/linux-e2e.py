@@ -2,7 +2,7 @@
 """End-to-end test of the Linux daemon, with no touchpad needed.
 
 A fake multitouch touchpad (created through uinput) drives the real `margin` binary with finger
-gestures, and the script reads back the key events that Margin's virtual keyboard emits.
+gestures, and the script reads back the key and wheel events that Margin's virtual keyboard and mouse emit.
 
     sudo python3 tools/linux-e2e.py target/release/margin [daemon-log-file]
 
@@ -17,7 +17,8 @@ LOG = sys.argv[2] if len(sys.argv) > 2 else "/tmp/margin_e2e.log"
 CFG = "/tmp/margin_e2e_cfg"
 W, H = 1000, 500                      # raw touchpad coordinates
 
-EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+EV_SYN, EV_KEY, EV_REL, EV_ABS = 0, 1, 2, 3
+REL_HWHEEL, REL_WHEEL, REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES = 0x06, 0x08, 0x0B, 0x0C
 BTN_LEFT, BTN_TOUCH, BTN_TOOL_FINGER = 0x110, 0x14A, 0x145
 ABS_X, ABS_Y, ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0, 1, 0x2F, 0x35, 0x36, 0x39
 KEY = {"A": 56, "TAB": 15, "CTRL": 29, "SHIFT": 42, "VOLUP": 115, "VOLDOWN": 114, "PLAYPAUSE": 164, "NEXT": 163, "PREV": 165,
@@ -125,6 +126,22 @@ def drain(fd, settle=0.6):
     return out
 
 
+def drain_wheel(fd, settle=0.6):
+    """Collect wheel events from the daemon's mouse until it has been quiet for `settle` seconds."""
+    out, last = {}, time.time()
+    while time.time() - last < settle:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if not r:
+            continue
+        data = os.read(fd, 24 * 64)
+        for i in range(0, len(data), 24):
+            _, _, t, c, v = struct.unpack("llHHi", data[i:i + 24])
+            if t == EV_REL:
+                out.setdefault(c, []).append(v)
+                last = time.time()
+    return out
+
+
 def write_settings(mutate):
     path = f"{CFG}/margin/settings.json"
     s = json.load(open(path))
@@ -155,6 +172,7 @@ def main():
         kb = wait_for(lambda: event_node("Margin virtual keyboard"), 8, "the daemon's virtual keyboard")
         wait_for(lambda: "touchpad: Fake Touchpad" in open(LOG).read(), 8, "the daemon to find the fake touchpad")
         fd = os.open(kb, os.O_RDONLY | os.O_NONBLOCK)
+        mouse = os.open(wait_for(lambda: event_node("Margin virtual mouse"), 8, "the daemon's virtual mouse"), os.O_RDONLY | os.O_NONBLOCK)
         time.sleep(0.5)
 
         # 1. left edge, slide up: volume up (default: left = volume)
@@ -304,7 +322,28 @@ def main():
         open(path, "w").write(good)
         time.sleep(1.6)
 
-        # 14. a disabled Margin does nothing
+        # 14. scroll: the right edge scrolls up and down in quarter notches, the bottom edge sideways
+        def scroll(s):
+            s["sections"]["right"] = {"slide": "scroll"}
+            s["sections"]["bottom"] = {"slide": "scroll"}
+        write_settings(scroll)
+        drain_wheel(mouse, 0.2)
+        pad.swipe(0.99, 0.30, 0.99, 0.75)
+        w = drain_wheel(mouse)
+        hi, lo = w.get(REL_WHEEL_HI_RES, []), w.get(REL_WHEEL, [])
+        check("scroll edge, slide up -> smooth wheel up",
+              len(hi) >= 8 and all(v > 0 and v % 30 == 0 for v in hi) and sum(lo) == sum(hi) // 120 and REL_HWHEEL_HI_RES not in w, w)
+        pad.swipe(0.99, 0.75, 0.99, 0.30)
+        w = drain_wheel(mouse)
+        check("scroll edge, slide down -> wheel down", w.get(REL_WHEEL_HI_RES) and all(v < 0 for v in w[REL_WHEEL_HI_RES]), w)
+        pad.swipe(0.30, 0.005, 0.70, 0.005)
+        w = drain_wheel(mouse)
+        check("scroll on the bottom edge, slide right -> sideways wheel right",
+              w.get(REL_HWHEEL_HI_RES) and all(v > 0 for v in w[REL_HWHEEL_HI_RES]) and REL_WHEEL_HI_RES not in w, w)
+        e = drain(fd, 0.1)
+        check("scroll sends no keys", e == [], e)
+
+        # 15. a disabled Margin does nothing
         write_settings(lambda s: s.update(enabled=False))
         pad.swipe(0.01, 0.30, 0.01, 0.62)
         e = drain(fd)

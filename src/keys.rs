@@ -225,23 +225,32 @@ mod send {
 
     /// Ctrl + mouse wheel, which zooms in browsers, Office, Explorer and most viewers.
     pub fn ctrl_wheel(notches: i32) {
-        if notches == 0 {
-            return;
+        if notches != 0 {
+            send(&[key(super::CTRL, false), wheel_input(notches * 120, false), key(super::CTRL, true)]);
         }
-        let wheel = INPUT {
+    }
+
+    /// Scrolls the window under the pointer by `units` (120 = one notch); positive is up / right.
+    pub fn wheel(units: i32, horizontal: bool) {
+        if units != 0 {
+            send(&[wheel_input(units, horizontal)]);
+        }
+    }
+
+    fn wheel_input(units: i32, horizontal: bool) -> INPUT {
+        INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
                     dx: 0,
                     dy: 0,
-                    mouseData: (notches * 120) as u32,
-                    dwFlags: MOUSEEVENTF_WHEEL,
+                    mouseData: units as u32,
+                    dwFlags: if horizontal { MOUSEEVENTF_HWHEEL } else { MOUSEEVENTF_WHEEL },
                     time: 0,
                     dwExtraInfo: 0,
                 },
             },
-        };
-        send(&[key(super::CTRL, false), wheel, key(super::CTRL, true)]);
+        }
     }
 
     /// Ctrl and Shift both held -> fine steps.
@@ -261,4 +270,4 @@ mod send {
 }
 
 #[cfg(windows)]
-pub use send::{combo, ctrl_wheel, fine_modifiers_held, hold, tap};
+pub use send::{combo, ctrl_wheel, fine_modifiers_held, hold, tap, wheel};

@@ -109,6 +109,7 @@ impl Daemon {
                 Effect::Tap { vk, times } => self.out.tap(vk, times),
                 Effect::Combo { vk, mods, times } => self.out.combo(vk, &mods, times),
                 Effect::CtrlWheel(n) => self.out.ctrl_wheel(n),
+                Effect::Wheel { units, horizontal } => self.out.wheel(units, horizontal),
                 Effect::Hold { vk, up } => self.out.hold(vk, up),
                 Effect::BrightnessRefresh | Effect::HideHud(_) => {}
                 Effect::BrightnessNudge(delta) => self.out.brightness(delta),
