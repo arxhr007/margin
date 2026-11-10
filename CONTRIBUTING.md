@@ -67,7 +67,7 @@ Write commit messages that say what changed and why, in plain sentences.
 
 ## Releases
 
-Releases are automatic. When a change to `version` in `Cargo.toml` lands on `main`, the [build workflow](.github/workflows/build.yml) tests, builds, creates the `v<version>` tag and publishes the release with the binaries and their checksums. Every other push and pull request only runs the tests. To release, the maintainer bumps the version (and `Cargo.lock`, which `cargo build` updates) in its own commit. Windows builds are signed as described in the [code signing policy](README.md#code-signing-policy).
+Releases are automatic. When a change to `version` in `Cargo.toml` lands on `main`, the [build workflow](.github/workflows/build.yml) tests, builds, creates the `v<version>` tag and publishes the release with the binaries and their checksums. Every other push and pull request only runs the tests. To release, the maintainer bumps the version (and `Cargo.lock`, which `cargo build` updates) in its own commit. Windows builds are signed as described in the [code signing policy](README.md#code-signing-policy). After the release, the workflow updates the winget package (`arxhr007.Margin`) by opening a pull request on [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). That step needs the repository secret `WINGET_TOKEN`, a classic personal access token with the `public_repo` scope from the maintainer's account, which also has a fork of winget-pkgs. Without the secret the step is skipped.
 
 ## License
 
