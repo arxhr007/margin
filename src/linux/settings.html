@@ -10,12 +10,14 @@
     --bg: #f1f2f4; --card: #ffffff; --fg: #1c1c1e; --muted: #6a6a72; --border: #cfd0d6;
     --accent: #0067c0; --zone: #c3d6ec; --zone-hover: #a9c7e6; --zone-sel: #7fb0de; --zone-off: transparent;
     --pad: #f4f5f7; --padline: #9a9aa2; --ink: #2b2b30; --bad: #fde4e4;
+    --on: #0f7b0f; --on-text: #0f6e0f; --off: #6e6e73;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #17181b; --card: #222327; --fg: #ececf0; --muted: #a2a2ac; --border: #3c3d44;
       --accent: #4aa3ff; --zone: #2f4a67; --zone-hover: #3a5d82; --zone-sel: #3f78b0; --zone-off: transparent;
       --pad: #2a2b30; --padline: #5a5b63; --ink: #e8e8ee; --bad: #5a2a2a;
+      --on: #2ea043; --on-text: #56d364; --off: #8b8b94;
     }
   }
   * { box-sizing: border-box; }
@@ -28,6 +30,16 @@
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
   .row { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; }
   label.inline { display: inline-flex; gap: 8px; align-items: center; }
+  /* the on/off switch: larger than the other controls, green when on */
+  label.switch { display: inline-flex; gap: 10px; align-items: center; font-size: 1.2rem; font-weight: 650; color: var(--muted); cursor: pointer; }
+  label.switch.on { color: var(--on-text); }
+  label.switch input { appearance: none; -webkit-appearance: none; margin: 0; width: 46px; height: 26px; border-radius: 13px;
+    border: 1.5px solid var(--off); background: var(--card); position: relative; cursor: pointer; flex: none; transition: background .15s, border-color .15s; }
+  label.switch input::before { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%;
+    background: var(--off); transition: transform .15s, background .15s; }
+  label.switch input:checked { background: var(--on); border-color: var(--on); }
+  label.switch input:checked::before { transform: translateX(20px); background: #fff; }
+  label.switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .cols { display: grid; grid-template-columns: minmax(300px, 1.3fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
   @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
   select, input[type=text] { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; }
@@ -57,7 +69,7 @@
 <main>
   <section class="card">
     <div class="row">
-      <label class="inline"><input type="checkbox" id="enabled"> Margin is on</label>
+      <label class="switch" id="enabledLabel"><input type="checkbox" role="switch" id="enabled"> <span id="enabledText">Margin is on</span></label>
       <label class="inline">Speed
         <select id="speed" style="width:auto"><option value="slow">Slow</option><option value="medium">Medium</option><option value="fast">Fast</option></select>
       </label>
@@ -242,7 +254,7 @@ async function load() {
 }
 
 function renderAll() {
-  $("#enabled").checked = !!S.enabled;
+  $("#enabled").checked = !!S.enabled; showEnabled();
   $("#speed").value = S.speed || "medium";
   $("#edgeDepth").value = Math.round(S.edgeDepth * 100); $("#edgeVal").textContent = Math.round(S.edgeDepth * 100) + "%";
   $("#cornerSize").value = Math.round(S.cornerSize * 100); $("#cornerVal").textContent = Math.round(S.cornerSize * 100) + "%";
@@ -251,7 +263,11 @@ function renderAll() {
 }
 
 // ---- events ----
-$("#enabled").onchange = e => { S.enabled = e.target.checked; changed(); };
+$("#enabled").onchange = e => { S.enabled = e.target.checked; showEnabled(); changed(); };
+function showEnabled() {
+  $("#enabledText").textContent = S.enabled ? "Margin is on" : "Margin is off";
+  $("#enabledLabel").classList.toggle("on", !!S.enabled);
+}
 $("#speed").onchange = e => { S.speed = e.target.value; changed(); };
 $("#edgeDepth").oninput = e => { S.edgeDepth = e.target.value / 100; $("#edgeVal").textContent = e.target.value + "%"; changed(); };
 $("#cornerSize").oninput = e => { S.cornerSize = e.target.value / 100; $("#cornerVal").textContent = e.target.value + "%"; changed(); };
