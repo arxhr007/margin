@@ -361,7 +361,7 @@ fn create_controls(hwnd: HWND) {
     // drawn as a large on/off switch (see draw_switch); the text is what screen readers announce
     let enabled = make_child(hwnd, w!("BUTTON"), switch_text(st.enabled), BS_OWNERDRAW as u32 | tab, 0, ID_ENABLED, font);
     // one box for every edge and corner at once; it shows a dash when they differ
-    let activation = make_child(hwnd, w!("BUTTON"), "Every edge and corner needs a click", BS_3STATE | tab, 0, ID_ACTIVATION, font);
+    let activation = make_child(hwnd, w!("BUTTON"), "Every edge and corner needs a click (untick: a tap is enough)", BS_3STATE | tab, 0, ID_ACTIVATION, font);
     let speed = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_SPEED, font);
     let startup = make_child(hwnd, w!("BUTTON"), "Start with Windows", BS_AUTOCHECKBOX | tab, 0, ID_STARTUP, font);
     let cap_speed = make_child(hwnd, w!("STATIC"), "Speed:", 0, 0, 0, font);
@@ -483,7 +483,7 @@ fn layout(hwnd: HWND) {
     let r3 = r2 + row_h + px(8.0, s);
     let mid = (switch_h - row_h) / 2; // centres the first row's other controls on the switch
     move_to(enabled, m - px(2.0, s), r1, px(205.0, s), switch_h);
-    move_to(activation, m + px(220.0, s), r1 + mid, px(330.0, s), row_h);
+    move_to(activation, m + px(220.0, s), r1 + mid, px(480.0, s), row_h);
     move_to(fixed[0], m, r2 + px(4.0, s), px(50.0, s), px(20.0, s));
     move_to(speed, m + px(55.0, s), r2, px(100.0, s), px(160.0, s));
     move_to(startup, m + px(180.0, s), r2, px(180.0, s), row_h);
