@@ -2,7 +2,7 @@
 //! Corners own their squares; edges run between the corners. The settings window draws exactly
 //! these rectangles, so what you see there is what the touchpad does.
 
-use crate::settings::{ClickAction, Section, Settings, SlideAction};
+use crate::settings::{Section, Settings, SlideAction};
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Pt {
@@ -66,7 +66,7 @@ pub fn hit(p: Pt, st: &Settings) -> Option<Section> {
 pub fn is_assigned(s: Section, st: &Settings) -> bool {
     let v = st.section(s);
     if s.is_corner() {
-        v.clicks.iter().any(|c| c.action != ClickAction::None)
+        v.corner_actions().next().is_some()
     } else {
         v.slide != SlideAction::Off
     }

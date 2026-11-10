@@ -199,8 +199,8 @@ fn summary(s: Section, st: &Settings) -> String {
     if !s.is_corner() {
         return labels::slide_short(v.slide).to_string();
     }
-    // Corners are small: show the single-click action, plus how many more are set.
-    let used: Vec<ClickAction> = v.clicks.iter().map(|c| c.action).filter(|a| *a != ClickAction::None).collect();
+    // Corners are small: show the first action (clicks before press and hold), plus how many more are set.
+    let used: Vec<ClickAction> = v.corner_actions().map(|c| c.action).collect();
     match used.len() {
         0 => String::new(),
         1 => labels::click_short(used[0]).to_string(),

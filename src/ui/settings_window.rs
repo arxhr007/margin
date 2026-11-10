@@ -21,7 +21,7 @@ use super::pad_view::{self, WM_PAD_CLICKED};
 use crate::app;
 use crate::keys;
 use crate::labels;
-use crate::settings::{Activation, ClickAction, ClickSpec, Section, Settings, SlideAction, Speed};
+use crate::settings::{Activation, ClickAction, Section, Settings, SlideAction, Speed, CORNER_SLOTS, LONG_PRESS_SLOT};
 use crate::startup;
 
 // control ids
@@ -37,7 +37,7 @@ const ID_BACK_BOX: u16 = 204;
 const ID_BACK_REC: u16 = 205;
 const ID_HOLD: u16 = 206;
 const ID_CUSTOMIZE: u16 = 207;
-const ID_CORNER_BASE: u16 = 300; // + slot * 10: +0 combo, +1 value, +2 browse
+const ID_CORNER_BASE: u16 = 300; // + slot * 10: +0 combo, +1 value, +2 browse; slots 0-2 clicks, 3 hold
 
 const WM_REBUILD: u32 = WM_APP + 20;
 
@@ -647,13 +647,18 @@ fn build_custom_keys(c: &mut Cursor, section: Section, v: &crate::settings::Sect
 }
 
 fn build_corner(c: &mut Cursor, section: Section, st: &Settings) {
-    let clicks = st.section(section).clicks.clone();
+    let v = st.section(section).clone();
     c.para("Press this corner until the touchpad clicks:", true, false, 2.0);
     let names: Vec<&str> = ClickAction::ALL.iter().map(|&a| labels::click_long(a)).collect();
-    for i in 0..3usize {
-        let spec = clicks.get(i).cloned().unwrap_or_default();
+    for i in 0..CORNER_SLOTS {
+        let spec = v.corner_slot(i);
         c.gap(6.0);
-        c.para(&if i == 0 { "1 click".to_string() } else { format!("{} clicks", i + 1) }, false, false, 2.0);
+        let title = match i {
+            0 => "1 click".to_string(),
+            LONG_PRESS_SLOT => "Press and hold".to_string(),
+            n => format!("{} clicks", n + 1),
+        };
+        c.para(&title, false, false, 2.0);
         let base = ID_CORNER_BASE + (i as u16) * 10;
         c.combo(base, &names, spec.action as usize, 4.0);
         if labels::needs_value(spec.action) {
@@ -663,11 +668,18 @@ fn build_corner(c: &mut Cursor, section: Section, st: &Settings) {
             unsafe {
                 SendMessageW(edit, EM_SETCUEBANNER, WPARAM(1), LPARAM(hint.as_ptr() as isize));
             }
-            mark_validity(edit);
+            if spec.action == ClickAction::Keys {
+                mark_validity(edit); // only shortcuts are checked; apps, websites and commands are free text
+            }
         }
     }
     c.gap(10.0);
-    c.para("Corners react only to a real press, never to a tap. Unused corners stay normal touchpad.", false, true, 0.0);
+    c.para(
+        "Corners react only to a real press, never to a tap. Press and hold means keeping the touchpad pressed for half a          second. Unused corners stay normal touchpad.",
+        false,
+        true,
+        0.0,
+    );
 }
 
 // ---------------------------------------------------------------- change handling
@@ -811,7 +823,9 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             app::edit_settings(|s| s.section_mut(section).hold_modifiers = on);
             changed();
         }
-        _ if (ID_CORNER_BASE..ID_CORNER_BASE + 30).contains(&id) => on_corner_command(hwnd, id, code, control, section),
+        _ if (ID_CORNER_BASE..ID_CORNER_BASE + 10 * CORNER_SLOTS as u16).contains(&id) => {
+            on_corner_command(hwnd, id, code, control, section)
+        }
         _ => {}
     }
 }
@@ -823,13 +837,10 @@ fn on_corner_command(hwnd: HWND, id: u16, code: u32, control: HWND, section: Sec
         0 if code == CBN_SELCHANGE => {
             let action = ClickAction::ALL[combo_index(control).min(ClickAction::ALL.len() - 1)];
             app::edit_settings(|s| {
-                let clicks = &mut s.section_mut(section).clicks;
-                while clicks.len() <= slot {
-                    clicks.push(ClickSpec::default());
-                }
-                clicks[slot].action = action;
+                let spec = s.section_mut(section).corner_slot_mut(slot);
+                spec.action = action;
                 if !labels::needs_value(action) {
-                    clicks[slot].value = None;
+                    spec.value = None;
                 }
             });
             changed();
@@ -838,14 +849,8 @@ fn on_corner_command(hwnd: HWND, id: u16, code: u32, control: HWND, section: Sec
         1 if code == EN_CHANGE => {
             let text = read_text(control);
             let value = (!text.is_empty()).then_some(text);
-            app::edit_settings(|s| {
-                let clicks = &mut s.section_mut(section).clicks;
-                while clicks.len() <= slot {
-                    clicks.push(ClickSpec::default());
-                }
-                clicks[slot].value = value;
-            });
-            let is_keys = app::read_settings(|s| s.section(section).clicks.get(slot).map(|c| c.action) == Some(ClickAction::Keys)).unwrap_or(false);
+            app::edit_settings(|s| s.section_mut(section).corner_slot_mut(slot).value = value);
+            let is_keys = app::read_settings(|s| s.section(section).corner_slot(slot).action == ClickAction::Keys).unwrap_or(false);
             if is_keys {
                 mark_validity(control);
             }

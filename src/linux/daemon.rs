@@ -8,7 +8,7 @@ use super::actions;
 use super::devices::{self, Probe, Touchpad};
 use super::output::Output;
 use super::sys::Fd;
-use crate::engine::{Effect, Engine, Env, MULTI_CLICK_MS};
+use crate::engine::{Effect, Engine, Env, HOLD_MS, MULTI_CLICK_MS};
 use crate::settings::{self, Activation, Settings};
 use crate::touchpad::tracker::TouchTracker;
 
@@ -68,6 +68,7 @@ struct Daemon {
     active: Option<u32>,
     prev_button: bool,
     click_deadline: Option<u64>,
+    hold_deadline: Option<u64>,
     denied_logged: bool,
 }
 
@@ -115,6 +116,8 @@ impl Daemon {
                 Effect::RunClick(spec) => actions::run(&spec, &self.out),
                 Effect::StartClickTimer => self.click_deadline = Some(crate::now_ms() + MULTI_CLICK_MS as u64),
                 Effect::StopClickTimer => self.click_deadline = None,
+                Effect::StartHoldTimer => self.hold_deadline = Some(crate::now_ms() + HOLD_MS as u64),
+                Effect::StopHoldTimer => self.hold_deadline = None,
             }
         }
     }
@@ -217,6 +220,7 @@ pub fn run(diag: bool) {
         active: None,
         prev_button: false,
         click_deadline: None,
+        hold_deadline: None,
         denied_logged: false,
     };
 
@@ -241,9 +245,9 @@ pub fn run(diag: bool) {
             }
         }
 
-        // wait for touchpad events, but wake up for the multi-click timer and the periodic checks
+        // wait for touchpad events, but wake up for the click timers and the periodic checks
         let mut timeout = 1000i64;
-        if let Some(deadline) = d.click_deadline {
+        for deadline in [d.click_deadline, d.hold_deadline].into_iter().flatten() {
             timeout = timeout.min(deadline as i64 - now as i64);
         }
         let mut fds: Vec<libc::pollfd> = d.pads.iter().map(|p| libc::pollfd { fd: p.fd.0, events: libc::POLLIN, revents: 0 }).collect();
@@ -284,6 +288,11 @@ pub fn run(diag: bool) {
         if d.click_deadline.is_some_and(|dl| crate::now_ms() >= dl) {
             d.click_deadline = None;
             d.engine.click_timer_fired(&d.settings);
+            d.after_engine();
+        }
+        if d.hold_deadline.is_some_and(|dl| crate::now_ms() >= dl) {
+            d.hold_deadline = None;
+            d.engine.hold_timer_fired(&d.settings);
             d.after_engine();
         }
     }

@@ -117,6 +117,15 @@ function section(key) {
   s.clicks = s.clicks || [];
   return s;
 }
+// Corner editor slots: 0-2 are 1-3 clicks, HOLD_SLOT is press and hold (`longPress`).
+const HOLD_SLOT = 3;
+const peekSlot = (s, i) => (i === HOLD_SLOT ? s.longPress : s.clicks[i]) || { do: "none" };
+function slot(s, i) {
+  if (i === HOLD_SLOT) return s.longPress || (s.longPress = { do: "none" });
+  while (s.clicks.length <= i) s.clicks.push({ do: "none" });
+  return s.clicks[i];
+}
+const cornerActions = s => [...s.clicks, peekSlot(s, HOLD_SLOT)].filter(c => c.do && c.do !== "none");
 const CORNERS = new Set(["topLeft", "topRight", "bottomLeft", "bottomRight"]);
 const isCorner = k => CORNERS.has(k);
 
@@ -133,7 +142,7 @@ function bounds(k) {
 function summary(k) {
   const s = section(k);
   if (!isCorner(k)) return (SLIDES.find(x => x[0] === s.slide) || [])[2] || "";
-  const used = s.clicks.filter(c => c.do && c.do !== "none");
+  const used = cornerActions(s);
   if (!used.length) return "";
   const short = (CLICKS.find(x => x[0] === used[0].do) || [])[2] || "";
   return used.length === 1 ? short : `${short} +${used.length - 1}`;
@@ -141,7 +150,7 @@ function summary(k) {
 
 function assigned(k) {
   const s = section(k);
-  return isCorner(k) ? s.clicks.some(c => c.do && c.do !== "none") : s.slide !== "off";
+  return isCorner(k) ? cornerActions(s).length > 0 : s.slide !== "off";
 }
 
 function renderPad() {
@@ -185,13 +194,13 @@ function renderEditor() {
     h += `<p class="hint">${selected === "left" || selected === "right" ? "Slide up for more / next, down for less / previous." : "Slide right for forward / next, left for back / previous."}</p>`;
   } else {
     h += `<p class="field"><span>Press this corner until the touchpad clicks:</span></p>`;
-    for (let i = 0; i < 3; i++) {
-      const c = s.clicks[i] || { do: "none" };
-      h += `<div class="field"><span>${i === 0 ? "1 click" : i + 1 + " clicks"}</span><select data-slot="${i}" class="act">${option(CLICKS, c.do || "none")}</select>`;
+    for (let i = 0; i <= HOLD_SLOT; i++) {
+      const c = peekSlot(s, i);
+      h += `<div class="field"><span>${i === HOLD_SLOT ? "Press and hold" : i === 0 ? "1 click" : i + 1 + " clicks"}</span><select data-slot="${i}" class="act">${option(CLICKS, c.do || "none")}</select>`;
       if (NEEDS_VALUE[c.do]) h += `<input type="text" data-val="${i}" class="val" placeholder="${NEEDS_VALUE[c.do]}" value="${esc(c.value || "")}" spellcheck="false" style="margin-top:6px">`;
       h += `</div>`;
     }
-    h += `<p class="hint">Corners react only to a real press, never to a tap. Unused corners stay a normal touchpad.</p>`;
+    h += `<p class="hint">Corners react only to a real press, never to a tap. Press and hold means keeping the touchpad pressed for half a second; on Linux the app under the pointer also sees that press. Unused corners stay a normal touchpad.</p>`;
   }
   ed.innerHTML = h;
   ed.querySelectorAll("input.val").forEach(markBad);
@@ -201,7 +210,7 @@ function renderEditor() {
 function esc(t) { return String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
 
 function markBad(el) {
-  const isKeys = el.id === "fwd" || el.id === "back" || (el.dataset.val !== undefined && section(selected).clicks[+el.dataset.val]?.do === "keys");
+  const isKeys = el.id === "fwd" || el.id === "back" || (el.dataset.val !== undefined && peekSlot(section(selected), +el.dataset.val).do === "keys");
   el.classList.toggle("bad", isKeys && el.value.trim() !== "" && !validShortcut(el.value));
 }
 
@@ -257,10 +266,9 @@ $("#editor").addEventListener("change", e => {
     s.forward = f; s.back = b; s.holdModifiers = hold; changed(); renderEditor();
   } else if (t.id === "hold") { s.holdModifiers = t.checked; changed(); }
   else if (t.classList.contains("act")) {
-    const i = +t.dataset.slot;
-    while (s.clicks.length <= i) s.clicks.push({ do: "none" });
-    s.clicks[i].do = t.value;
-    if (!NEEDS_VALUE[t.value]) delete s.clicks[i].value;
+    const c = slot(s, +t.dataset.slot);
+    c.do = t.value;
+    if (!NEEDS_VALUE[t.value]) delete c.value;
     changed(); renderEditor();
   }
 });
@@ -268,8 +276,7 @@ $("#editor").addEventListener("input", e => {
   const t = e.target, s = section(selected);
   if (t.id === "fwd" || t.id === "back") { s[t.id === "fwd" ? "forward" : "back"] = t.value.trim() || undefined; markBad(t); changed(); }
   else if (t.classList.contains("val")) {
-    const i = +t.dataset.val;
-    s.clicks[i].value = t.value.trim() || undefined; markBad(t); changed();
+    slot(s, +t.dataset.val).value = t.value.trim() || undefined; markBad(t); changed();
   }
 });
 $("#editor").addEventListener("click", e => {
