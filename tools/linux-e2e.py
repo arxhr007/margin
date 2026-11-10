@@ -322,7 +322,7 @@ def main():
         open(path, "w").write(good)
         time.sleep(1.6)
 
-        # 14. scroll: the right edge scrolls up and down in quarter notches, the bottom edge sideways
+        # 14. scroll: the right edge scrolls up and down in small pieces that follow the finger, the bottom edge sideways
         def scroll(s):
             s["sections"]["right"] = {"slide": "scroll"}
             s["sections"]["bottom"] = {"slide": "scroll"}
@@ -332,7 +332,7 @@ def main():
         w = drain_wheel(mouse)
         hi, lo = w.get(REL_WHEEL_HI_RES, []), w.get(REL_WHEEL, [])
         check("scroll edge, slide up -> smooth wheel up",
-              len(hi) >= 8 and all(v > 0 and v % 30 == 0 for v in hi) and sum(lo) == sum(hi) // 120 and REL_HWHEEL_HI_RES not in w, w)
+              len(hi) >= 12 and all(0 < v < 120 for v in hi) and sum(lo) == sum(hi) // 120 and REL_HWHEEL_HI_RES not in w, w)
         pad.swipe(0.99, 0.75, 0.99, 0.30)
         w = drain_wheel(mouse)
         check("scroll edge, slide down -> wheel down", w.get(REL_WHEEL_HI_RES) and all(v < 0 for v in w[REL_WHEEL_HI_RES]), w)
