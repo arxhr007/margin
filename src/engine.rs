@@ -8,7 +8,8 @@
 //!   SlideIn - one finger first appears in the thin outer strip of an assigned edge (it came in from the
 //!             laptop body), then moves mostly along the edge within a short window. No click needed.
 //!             Fingers born anywhere else, or any multi-finger contact, are ignored until all fingers lift.
-//! Corners always need a physical click; 1-3 quick clicks pick the action.
+//! Corners always need a physical click; 1-3 quick clicks pick the action, and holding the click runs the
+//! corner's long-press action.
 //! While a slide runs the pointer is frozen and travel along the edge is turned into steps.
 
 use std::collections::HashSet;
@@ -22,6 +23,8 @@ const INTENT_WINDOW_MS: u64 = 600;
 const INTENT_TRAVEL: f32 = 0.03;
 /// How long to wait for another click of a multi-click combination.
 pub const MULTI_CLICK_MS: u32 = 300;
+/// How long a corner must be held down to run its long-press action.
+pub const HOLD_MS: u32 = 500;
 
 /// What the engine needs from the outside world.
 pub trait Env {
@@ -47,6 +50,9 @@ pub enum Effect {
     /// (Re)start the multi-click timer; the app calls `Engine::click_timer_fired` when it expires.
     StartClickTimer,
     StopClickTimer,
+    /// (Re)start the long-press timer; the app calls `Engine::hold_timer_fired` when it expires.
+    StartHoldTimer,
+    StopHoldTimer,
 }
 
 struct Run {
@@ -74,6 +80,8 @@ pub struct Engine {
     /// Modifiers kept down for the current slide (Alt for an Alt+Tab switcher).
     held_keys: Vec<u16>,
     pressed_corner: Option<Section>,
+    /// The pressed corner's long-press timer is running.
+    hold_armed: bool,
     click_corner: Option<Section>,
     click_count: u32,
     effects: Vec<Effect>,
@@ -308,6 +316,7 @@ impl Engine {
             crate::log::info("button-up was lost, clearing stale click");
             self.holding_click = false;
             self.pressed_corner = None;
+            self.disarm_hold();
         }
         if !st.enabled {
             return false;
@@ -335,6 +344,11 @@ impl Engine {
 
         if s.is_corner() {
             self.pressed_corner = Some(s);
+            // Holding starts the long-press timer, unless this corner is in the middle of a multi-click.
+            if !st.section(s).long_press.is_unset() && self.click_corner != Some(s) {
+                self.hold_armed = true;
+                self.effects.push(Effect::StartHoldTimer);
+            }
         } else {
             if st.activation != Activation::Press {
                 return false;
@@ -353,6 +367,7 @@ impl Engine {
         if matches!(&self.run, Some(r) if r.from_press) {
             self.stop();
         }
+        self.disarm_hold();
         if let Some(corner) = self.pressed_corner.take() {
             self.count_click(corner, st);
         }
@@ -363,6 +378,31 @@ impl Engine {
         self.candidate = None;
         self.holding_click = false;
         self.pressed_corner = None;
+        self.disarm_hold();
+    }
+
+    fn disarm_hold(&mut self) {
+        if std::mem::take(&mut self.hold_armed) {
+            self.effects.push(Effect::StopHoldTimer);
+        }
+    }
+
+    /// The long-press timer expired: if the corner is still held, run its long-press action.
+    pub fn hold_timer_fired(&mut self, st: &Settings) {
+        if !std::mem::take(&mut self.hold_armed) {
+            return;
+        }
+        let Some(corner) = self.pressed_corner.filter(|_| self.holding_click) else { return };
+        if self.click_corner.is_some() {
+            self.finish_clicks(st); // another corner's clicks are final now
+        }
+        // The release that follows is part of this hold, not a click.
+        self.pressed_corner = None;
+        let spec = st.section(corner).long_press.clone();
+        if !spec.is_unset() {
+            crate::debug!("{corner:?} held -> {:?}", spec.action);
+            self.effects.push(Effect::RunClick(spec));
+        }
     }
 
     fn count_click(&mut self, corner: Section, st: &Settings) {
@@ -877,6 +917,85 @@ mod tests {
         release(&mut r);
         let fx = r.fx();
         assert!(!fx.iter().any(|e| matches!(e, Effect::RunClick(_))), "single click slot is empty");
+    }
+
+    fn runs(fx: Vec<Effect>) -> Vec<ClickAction> {
+        fx.into_iter().filter_map(|e| if let Effect::RunClick(c) = e { Some(c.action) } else { None }).collect()
+    }
+
+    fn long_press(r: &mut Rig, s: Section, action: ClickAction) {
+        r.st.section_mut(s).long_press = ClickSpec { action, value: None };
+    }
+
+    #[test]
+    fn holding_a_corner_runs_its_long_press_and_the_release_is_not_a_click() {
+        let mut r = Rig::new(); // bottom-left: 1 click = lock
+        long_press(&mut r, Section::BottomLeft, ClickAction::Mute);
+        assert!(press(&mut r, (0.05, 0.05)));
+        assert!(r.fx().contains(&Effect::StartHoldTimer));
+        r.engine.hold_timer_fired(&r.st);
+        assert_eq!(runs(r.fx()), vec![ClickAction::Mute]);
+        release(&mut r);
+        assert_eq!(runs(r.fx()), vec![], "the release after a hold must not lock");
+    }
+
+    #[test]
+    fn releasing_before_the_hold_time_is_a_normal_click() {
+        let mut r = Rig::new();
+        long_press(&mut r, Section::BottomLeft, ClickAction::Mute);
+        assert!(press(&mut r, (0.05, 0.05)));
+        r.fx();
+        release(&mut r);
+        let fx = r.fx();
+        assert!(fx.contains(&Effect::StopHoldTimer));
+        assert_eq!(runs(fx), vec![ClickAction::Lock]);
+        r.engine.hold_timer_fired(&r.st); // a timer that fires late does nothing
+        assert_eq!(runs(r.fx()), vec![]);
+    }
+
+    #[test]
+    fn a_corner_with_only_a_long_press_is_captured() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::TopLeft).clicks.clear();
+        long_press(&mut r, Section::TopLeft, ClickAction::Lock);
+        assert!(press(&mut r, (0.05, 0.95)), "the press belongs to Margin");
+        release(&mut r);
+        assert_eq!(runs(r.fx()), vec![], "a short press runs nothing");
+        assert!(press(&mut r, (0.05, 0.95)));
+        r.engine.hold_timer_fired(&r.st);
+        assert_eq!(runs(r.fx()), vec![ClickAction::Lock]);
+    }
+
+    #[test]
+    fn a_corner_without_a_long_press_never_starts_the_hold_timer() {
+        let mut r = Rig::new();
+        assert!(press(&mut r, (0.05, 0.05)));
+        assert!(!r.fx().contains(&Effect::StartHoldTimer));
+    }
+
+    #[test]
+    fn a_hold_runs_another_corners_waiting_clicks_first() {
+        let mut r = Rig::new(); // top-right: 1 = task view, waits for a second click
+        long_press(&mut r, Section::BottomLeft, ClickAction::Mute);
+        assert!(press(&mut r, (0.95, 0.95)));
+        release(&mut r);
+        r.fx();
+        assert!(press(&mut r, (0.05, 0.05)));
+        r.engine.hold_timer_fired(&r.st);
+        assert_eq!(runs(r.fx()), vec![ClickAction::TaskView, ClickAction::Mute]);
+    }
+
+    #[test]
+    fn the_second_click_of_a_double_click_does_not_start_a_hold() {
+        let mut r = Rig::new(); // top-right: 1 = task view, 2 = notifications
+        long_press(&mut r, Section::TopRight, ClickAction::Mute);
+        assert!(press(&mut r, (0.95, 0.95)));
+        release(&mut r);
+        r.fx();
+        assert!(press(&mut r, (0.95, 0.95)));
+        assert!(!r.fx().contains(&Effect::StartHoldTimer));
+        release(&mut r);
+        assert_eq!(runs(r.fx()), vec![ClickAction::Notifications]);
     }
 
     #[test]

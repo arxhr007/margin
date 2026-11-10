@@ -12,7 +12,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::engine::{Effect, Engine, Env, MULTI_CLICK_MS};
+use crate::engine::{Effect, Engine, Env, HOLD_MS, MULTI_CLICK_MS};
 use crate::settings::{self, Settings};
 use crate::touchpad::raw::RawTouchpad;
 use crate::touchpad::tracker::TouchTracker;
@@ -25,6 +25,7 @@ pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 3;
 const TIMER_CLICK: usize = 1;
 const TIMER_SAVE: usize = 2;
 const TIMER_WATCH: usize = 3;
+const TIMER_HOLD: usize = 4;
 const SAVE_DELAY_MS: u32 = 400;
 /// How often settings.json is checked for changes made outside Margin (by hand, or a synced copy).
 const WATCH_MS: u32 = 1000;
@@ -263,6 +264,12 @@ fn run_effect(effect: Effect) {
         Effect::StopClickTimer => unsafe {
             let _ = KillTimer(main_hwnd(), TIMER_CLICK);
         },
+        Effect::StartHoldTimer => unsafe {
+            SetTimer(main_hwnd(), TIMER_HOLD, HOLD_MS, None);
+        },
+        Effect::StopHoldTimer => unsafe {
+            let _ = KillTimer(main_hwnd(), TIMER_HOLD);
+        },
     }
 }
 
@@ -406,6 +413,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             TIMER_CLICK => {
                 with(|s| {
                     s.engine.click_timer_fired(&s.settings);
+                    s.engine_done();
+                });
+            }
+            TIMER_HOLD => {
+                let _ = KillTimer(hwnd, TIMER_HOLD);
+                with(|s| {
+                    s.engine.hold_timer_fired(&s.settings);
                     s.engine_done();
                 });
             }

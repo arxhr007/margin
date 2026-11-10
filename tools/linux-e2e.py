@@ -246,7 +246,65 @@ def main():
         ok = presses(e, "PAGEDOWN") >= 1 and presses(e, "CTRL") == presses(e, "PAGEDOWN") and all(v in (0, 1) for _, v in e)
         check("custom keys: Ctrl+PageDown per step", ok, e)
 
-        # 11. a disabled Margin does nothing
+        # 11. press and hold a corner: bottom-left 1 press = next track, held = mute
+        def hold(s):
+            s["sections"]["bottomLeft"] = {"clicks": [{"do": "nextTrack"}], "longPress": {"do": "mute"}}
+        write_settings(hold)
+        pad.down(0.03, 0.03)
+        time.sleep(0.05)
+        pad.click(True)
+        time.sleep(0.8)            # longer than the half-second hold
+        mid = drain(fd, 0.2)
+        pad.click(False)
+        time.sleep(0.05)
+        pad.up()
+        late = drain(fd, 0.8)
+        check("held corner -> its long-press action, while still held", mid == [("MUTE", 1), ("MUTE", 0)], mid)
+        check("releasing a held corner runs no click action", late == [], late)
+        pad.down(0.03, 0.03)
+        time.sleep(0.05)
+        pad.click(True)
+        time.sleep(0.1)
+        pad.click(False)
+        time.sleep(0.05)
+        pad.up()
+        e = drain(fd, 0.8)
+        check("short press on that corner -> its 1-press action", e == [("NEXT", 1), ("NEXT", 0)], e)
+
+        # 12. a click waiting for more clicks isn't lost when another corner is pressed right after
+        pad.down(0.97, 0.03)       # bottom-right: 1 press = play/pause, but it waits for a 2nd or 3rd
+        time.sleep(0.05)
+        pad.click(True)
+        time.sleep(0.05)
+        pad.click(False)
+        time.sleep(0.03)
+        pad.up()
+        time.sleep(0.05)
+        pad.down(0.03, 0.97)       # top-left within the wait: show desktop
+        time.sleep(0.05)
+        pad.click(True)
+        time.sleep(0.05)
+        pad.click(False)
+        time.sleep(0.05)
+        pad.up()
+        e = drain(fd, 1.0)
+        check("waiting corner click runs before the next corner's",
+              e == [("PLAYPAUSE", 1), ("PLAYPAUSE", 0), ("META", 1), ("D", 1), ("D", 0), ("META", 0)], e)
+
+        # 13. a broken settings.json is kept as a copy and the running settings stay (left = brightness)
+        path = f"{CFG}/margin/settings.json"
+        good = open(path).read()
+        open(path, "w").write('{ "enabled": true, "speed": "fast" "oops" }')
+        time.sleep(1.6)
+        pad.swipe(0.01, 0.30, 0.01, 0.62)
+        e = drain(fd)
+        check("broken settings.json: keeps the settings it had", presses(e, "BRIGHTUP") >= 1 and presses(e, "VOLUP") == 0, e)
+        check("broken settings.json: a copy is kept as settings.json.broken",
+              os.path.exists(path + ".broken") and "oops" in open(path + ".broken").read())
+        open(path, "w").write(good)
+        time.sleep(1.6)
+
+        # 14. a disabled Margin does nothing
         write_settings(lambda s: s.update(enabled=False))
         pad.swipe(0.01, 0.30, 0.01, 0.62)
         e = drain(fd)

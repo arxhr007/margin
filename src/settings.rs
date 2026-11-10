@@ -187,7 +187,22 @@ pub struct SectionSettings {
     pub back: Option<String>,
     /// Custom keys: keep the modifiers both shortcuts share (e.g. Alt) held for the whole slide.
     pub hold_modifiers: bool,
+    /// Used by the four corners: pressing and holding the corner.
+    #[serde(skip_serializing_if = "ClickSpec::is_unset")]
+    pub long_press: ClickSpec,
 }
+
+impl ClickSpec {
+    pub const NONE: ClickSpec = ClickSpec { action: ClickAction::None, value: None };
+
+    pub fn is_unset(&self) -> bool {
+        self.action == ClickAction::None
+    }
+}
+
+/// How many actions a corner editor shows: 1, 2 and 3 clicks, then press and hold.
+pub const CORNER_SLOTS: usize = 4;
+pub const LONG_PRESS_SLOT: usize = 3;
 
 impl SectionSettings {
     const EMPTY: SectionSettings = SectionSettings {
@@ -196,7 +211,33 @@ impl SectionSettings {
         forward: None,
         back: None,
         hold_modifiers: false,
+        long_press: ClickSpec::NONE,
     };
+
+    /// A corner action by editor slot: 0-2 are 1-3 clicks, [`LONG_PRESS_SLOT`] is press and hold.
+    pub fn corner_slot(&self, slot: usize) -> ClickSpec {
+        if slot == LONG_PRESS_SLOT {
+            self.long_press.clone()
+        } else {
+            self.clicks.get(slot).cloned().unwrap_or_default()
+        }
+    }
+
+    /// The same, for editing; missing click slots are created.
+    pub fn corner_slot_mut(&mut self, slot: usize) -> &mut ClickSpec {
+        if slot == LONG_PRESS_SLOT {
+            return &mut self.long_press;
+        }
+        while self.clicks.len() <= slot {
+            self.clicks.push(ClickSpec::default());
+        }
+        &mut self.clicks[slot]
+    }
+
+    /// Every corner action that is set, clicks first.
+    pub fn corner_actions(&self) -> impl Iterator<Item = &ClickSpec> {
+        self.clicks.iter().chain(std::iter::once(&self.long_press)).filter(|c| !c.is_unset())
+    }
 
     fn slide(action: SlideAction) -> Self {
         SectionSettings { slide: action, ..Self::EMPTY }
@@ -587,6 +628,30 @@ mod tests {
         for (i, a) in ClickAction::ALL.iter().enumerate() {
             assert_eq!(*a as usize, i);
         }
+    }
+
+    #[test]
+    fn long_press_is_read_written_and_left_out_when_unset() {
+        let mut st = Settings::default();
+        assert!(!serde_json::to_string(&st).unwrap().contains("longPress"), "unset: not written");
+        st.section_mut(Section::BottomLeft).long_press = ClickSpec { action: ClickAction::Url, value: Some("example.com".into()) };
+        let text = serde_json::to_string_pretty(&st).unwrap();
+        assert!(text.contains("\"longPress\""));
+        let back = parse(&text).unwrap();
+        assert_eq!(back.section(Section::BottomLeft).long_press.action, ClickAction::Url);
+        assert_eq!(back.section(Section::BottomLeft).long_press.value.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn corner_slots_map_clicks_and_long_press() {
+        let mut v = SectionSettings::default();
+        v.corner_slot_mut(2).action = ClickAction::Mute; // grows the click list
+        v.corner_slot_mut(LONG_PRESS_SLOT).action = ClickAction::Lock;
+        assert_eq!(v.clicks.len(), 3);
+        assert_eq!(v.corner_slot(2).action, ClickAction::Mute);
+        assert_eq!(v.corner_slot(LONG_PRESS_SLOT).action, ClickAction::Lock);
+        let set: Vec<_> = v.corner_actions().map(|c| c.action).collect();
+        assert_eq!(set, vec![ClickAction::Mute, ClickAction::Lock]);
     }
 
     fn temp_dir(name: &str) -> PathBuf {

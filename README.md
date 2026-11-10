@@ -23,7 +23,7 @@
 Most laptop touchpads only use their middle for gestures. Margin uses the unused strip around the outside:
 
 - **Slide a finger along an edge** to change volume or screen brightness, scrub a video, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed.
-- **Press a corner** once, twice or three times to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
+- **Press a corner** once, twice or three times, or press and hold it, to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
 - **Record your own shortcuts** for each slide direction, so an edge can drive any app.
 
 Everything in the middle of the touchpad stays a normal touchpad. Margin is one small native program (about 0.6 MB) that needs nothing installed, uses no network and sends no telemetry.
@@ -138,7 +138,7 @@ On Windows, while a slide runs the pointer stays still and nothing is clicked un
 
 ### Corners: press them
 
-Press a corner until the touchpad physically clicks. Taps are ignored. Each corner can run a different action for **1, 2 or 3 presses**:
+Press a corner until the touchpad physically clicks. Taps are ignored. Each corner can run a different action for **1, 2 or 3 presses**, and one more for **press and hold** (keep it pressed for half a second):
 
 Mute · Play / pause · Next / previous track · Screenshot · Task View / overview · Show desktop · Lock the PC · Notifications · **Open an app** · **Open a website** · **Press a shortcut** · **Run a command** · Nothing
 
@@ -231,7 +231,8 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
         { "do": "playPause" },
         { "do": "nextTrack" },
         { "do": "url", "value": "https://example.com" }
-      ]
+      ],
+      "longPress": { "do": "lock" }
     }
   }
 }
@@ -243,10 +244,11 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `speed` | `slow`, `medium` or `fast` |
 | `edgeDepth`, `cornerSize` | size of the edge strips and corner squares, as a fraction of the touchpad |
 | `entryStrip` | slide-in mode: how close to the edge a finger must first appear |
-| `sections` | `left`, `right`, `top`, `bottom` (use `slide`) and `topLeft`, `topRight`, `bottomLeft`, `bottomRight` (use `clicks`) |
+| `sections` | `left`, `right`, `top`, `bottom` (use `slide`) and `topLeft`, `topRight`, `bottomLeft`, `bottomRight` (use `clicks` and `longPress`) |
 | `slide` | `off`, `volume`, `brightness`, `seek`, `zoom`, `tabs`, `tracks`, `desktops`, `custom` |
 | `clicks[].do` | `none`, `mute`, `playPause`, `nextTrack`, `prevTrack`, `screenshot`, `taskView`, `showDesktop`, `lock`, `notifications`, `app`, `url`, `keys`, `command` |
 | `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command` |
+| `longPress` | the action for pressing and holding the corner, with the same `do` and `value` as a click |
 
 ## Troubleshooting
 
