@@ -1,6 +1,6 @@
 [package]
 name = "margin"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Assign controls to the edges and corners of your touchpad (Windows and Linux)"
 license = "MIT"
