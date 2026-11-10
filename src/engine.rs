@@ -8,15 +8,17 @@
 //!   SlideIn - one finger first appears in the thin outer strip of an assigned edge (it came in from the
 //!             laptop body), then moves mostly along the edge within a short window. No click needed.
 //!             Fingers born anywhere else, or any multi-finger contact, are ignored until all fingers lift.
-//! Corners always need a physical click; 1-3 quick clicks pick the action, and holding the click runs the
-//! corner's long-press action.
+//! Each edge can instead need a click (`Settings::needs_click`): then only the Press way starts it.
+//! Corners need a physical click unless set to work by touch; 1-3 quick clicks (or taps) pick the action,
+//! and holding the click (or the touch) runs the corner's long-press action. A tap is a finger that lands
+//! in the corner and lifts again soon, without moving away or clicking.
 //! While a slide runs the pointer is frozen and travel along the edge is turned into steps.
 
 use std::collections::HashSet;
 
 use crate::geometry;
 use crate::keys;
-use crate::settings::{Activation, ClickAction, ClickSpec, Section, SectionSettings, Settings, SlideAction, Speed};
+use crate::settings::{ClickAction, ClickSpec, Section, SectionSettings, Settings, SlideAction, Speed};
 use crate::touchpad::tracker::{TouchPoint, TouchTracker};
 
 const INTENT_WINDOW_MS: u64 = 600;
@@ -25,6 +27,12 @@ const INTENT_TRAVEL: f32 = 0.03;
 pub const MULTI_CLICK_MS: u32 = 300;
 /// How long a corner must be held down to run its long-press action.
 pub const HOLD_MS: u32 = 500;
+/// A touch on a corner that works by touch is a tap when it lifts within this time...
+const TAP_MAX_MS: u64 = 400;
+/// ...without moving further than this (fraction of the touchpad).
+const TAP_SLOP: f32 = 0.03;
+/// After a corner tap, the click Windows makes for that tap (tap-to-click) arrives within this time.
+const TAP_CLICK_MS: u64 = 500;
 /// Scroll sends the wheel movement as soon as the finger has moved this many wheel units
 /// (120 = one notch). Small enough to look continuous, big enough that a resting finger's
 /// sensor noise doesn't make the page shiver. Edge (and Chrome) can sit still for a third of a
@@ -78,6 +86,15 @@ struct Candidate {
     born_at: u64,
 }
 
+/// A finger resting on a corner that works by touch.
+struct CornerTouch {
+    corner: Section,
+    finger_id: i32,
+    born_at: u64,
+    /// Its long-press action already ran, so lifting it is not a tap.
+    held: bool,
+}
+
 #[derive(Default)]
 pub struct Engine {
     run: Option<Run>,
@@ -92,6 +109,12 @@ pub struct Engine {
     hold_armed: bool,
     click_corner: Option<Section>,
     click_count: u32,
+    touch: Option<CornerTouch>,
+    /// The finger last checked for starting a corner touch, so each finger is judged once.
+    touch_judged: Option<i32>,
+    /// Corner taps whose tap-to-click hasn't arrived yet, and until when it may arrive.
+    taps_to_swallow: u32,
+    swallow_until: u64,
     effects: Vec<Effect>,
 }
 
@@ -116,7 +139,7 @@ impl Engine {
 
     /// No slide running and no click held or waiting for more clicks: the settings can change.
     pub fn is_idle(&self) -> bool {
-        !self.is_sliding() && !self.holding_click && self.click_corner.is_none()
+        !self.is_sliding() && !self.holding_click && self.click_corner.is_none() && self.touch.is_none()
     }
 
     // ---------------- touch frames ----------------
@@ -135,8 +158,58 @@ impl Engine {
 
         if self.run.is_some() {
             self.follow(fingers, st, env);
-        } else if st.enabled && st.activation == Activation::SlideIn {
-            self.watch(fingers, st, env);
+        } else if st.enabled {
+            self.watch(fingers, st, env); // only edges that work by touch qualify, see `entry_edge`
+            self.watch_corner(fingers, st, env);
+        }
+    }
+
+    /// Corners that work by touch: a tap counts like a click, a still touch held long enough runs the
+    /// long-press action.
+    fn watch_corner(&mut self, fingers: &[TouchPoint], st: &Settings, env: &dyn Env) {
+        let now = env.now_ms();
+        if let Some(t) = &self.touch {
+            let finger = fingers.iter().find(|f| f.id == t.finger_id);
+            let lifted = finger.is_none();
+            let left = finger.is_some_and(|f| {
+                geometry::hit(f.current, st) != Some(t.corner)
+                    || (f.current.x - f.start.x).hypot(f.current.y - f.start.y) > TAP_SLOP
+            });
+            if fingers.len() > 1 || self.multi_finger_seen || left {
+                self.touch = None;
+                self.disarm_hold();
+                return;
+            }
+            if !lifted {
+                return;
+            }
+            let t = self.touch.take().expect("checked above");
+            self.disarm_hold();
+            if !t.held && now.saturating_sub(t.born_at) <= TAP_MAX_MS {
+                crate::debug!("{:?} tapped", t.corner);
+                self.taps_to_swallow += 1;
+                self.swallow_until = now + TAP_CLICK_MS;
+                self.count_click(t.corner, st);
+            }
+            return;
+        }
+
+        if fingers.len() != 1 || self.multi_finger_seen || self.holding_click {
+            return;
+        }
+        let f = fingers[0];
+        if self.touch_judged == Some(f.id) {
+            return;
+        }
+        self.touch_judged = Some(f.id);
+        let Some(corner) = geometry::hit(f.start, st) else { return };
+        if !corner.is_corner() || st.needs_click(corner) || !geometry::is_assigned(corner, st) {
+            return;
+        }
+        self.touch = Some(CornerTouch { corner, finger_id: f.id, born_at: now, held: false });
+        if !st.section(corner).long_press.is_unset() && self.click_corner != Some(corner) {
+            self.hold_armed = true;
+            self.effects.push(Effect::StartHoldTimer);
         }
     }
 
@@ -341,7 +414,7 @@ impl Engine {
     // ---------------- clicks (from the mouse hook) ----------------
 
     /// Returns true when the click belongs to Margin and must be hidden from apps.
-    pub fn mouse_down(&mut self, tracker: &TouchTracker, st: &Settings) -> bool {
+    pub fn mouse_down(&mut self, tracker: &TouchTracker, st: &Settings, env: &dyn Env) -> bool {
         if self.holding_click {
             crate::log::info("button-up was lost, clearing stale click");
             self.holding_click = false;
@@ -350,6 +423,18 @@ impl Engine {
         }
         if !st.enabled {
             return false;
+        }
+
+        // The click Windows makes for a corner tap (no button bit: it isn't a real press).
+        if self.taps_to_swallow > 0 {
+            if env.now_ms() > self.swallow_until {
+                self.taps_to_swallow = 0;
+            } else if !(tracker.device_has_button && tracker.button_down) {
+                self.taps_to_swallow -= 1;
+                self.holding_click = true;
+                crate::debug!("swallow the tap's click");
+                return true;
+            }
         }
 
         // A click during a slide-in run is part of the gesture.
@@ -373,6 +458,7 @@ impl Engine {
         }
 
         if s.is_corner() {
+            self.touch = None; // a real press: it counts as a click, not as a tap
             self.pressed_corner = Some(s);
             // Holding starts the long-press timer, unless this corner is in the middle of a multi-click.
             if !st.section(s).long_press.is_unset() && self.click_corner != Some(s) {
@@ -380,7 +466,7 @@ impl Engine {
                 self.effects.push(Effect::StartHoldTimer);
             }
         } else {
-            if st.activation != Activation::Press {
+            if !st.needs_click(s) {
                 return false;
             }
             self.start(s, f, true, st);
@@ -408,6 +494,8 @@ impl Engine {
         self.candidate = None;
         self.holding_click = false;
         self.pressed_corner = None;
+        self.touch = None;
+        self.taps_to_swallow = 0;
         self.disarm_hold();
     }
 
@@ -422,12 +510,20 @@ impl Engine {
         if !std::mem::take(&mut self.hold_armed) {
             return;
         }
-        let Some(corner) = self.pressed_corner.filter(|_| self.holding_click) else { return };
+        let corner = if self.holding_click {
+            self.pressed_corner
+        } else {
+            self.touch.as_ref().filter(|t| !t.held).map(|t| t.corner)
+        };
+        let Some(corner) = corner else { return };
         if self.click_corner.is_some() {
             self.finish_clicks(st); // another corner's clicks are final now
         }
-        // The release that follows is part of this hold, not a click.
+        // The release (or lift) that follows is part of this hold, not a click.
         self.pressed_corner = None;
+        if let Some(t) = &mut self.touch {
+            t.held = true;
+        }
         let spec = st.section(corner).long_press.clone();
         if !spec.is_unset() {
             crate::debug!("{corner:?} held -> {:?}", spec.action);
@@ -491,6 +587,7 @@ fn step_size(a: SlideAction, st: &Settings) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Activation;
     use std::cell::Cell;
 
     struct FakeEnv {
@@ -659,7 +756,7 @@ mod tests {
         r.frame(&[(1, 0.01, 0.50)]);
         r.frame(&[(1, 0.01, 0.60)]);
         assert!(!r.engine.freeze_pointer());
-        assert!(!r.engine.mouse_down(&r.tracker, &r.st));
+        assert!(!r.engine.mouse_down(&r.tracker, &r.st, &r.env));
     }
 
     // --- actions -------------------------------------------------------------------------
@@ -852,7 +949,7 @@ mod tests {
         r.tracker.device_has_button = true;
         r.tracker.commit(&[(1, at.0, at.1)], true);
         r.engine.on_frame(&r.tracker, &r.st, &r.env);
-        r.engine.mouse_down(&r.tracker, &r.st)
+        r.engine.mouse_down(&r.tracker, &r.st, &r.env)
     }
 
     fn release(r: &mut Rig) {
@@ -889,7 +986,95 @@ mod tests {
         // tap-to-click: the pad has a button but it is not down
         r.tracker.device_has_button = true;
         r.tracker.commit(&[(1, 0.05, 0.5)], false);
-        assert!(!r.engine.mouse_down(&r.tracker, &r.st));
+        assert!(!r.engine.mouse_down(&r.tracker, &r.st, &r.env));
+    }
+
+    #[test]
+    fn each_edge_can_need_a_click_or_not() {
+        let mut r = Rig::new(); // slide-in for all
+        r.st.section_mut(Section::Left).needs_click = Some(true);
+        r.frame(&[(1, 0.01, 0.50)]); // sliding in on the left edge: it needs a click now
+        r.frame(&[(1, 0.01, 0.60)]);
+        assert!(!r.engine.freeze_pointer());
+        r.lift();
+        assert!(press(&mut r, (0.05, 0.50)), "a click on the left edge starts it");
+        release(&mut r);
+        assert!(!press(&mut r, (0.95, 0.50)), "the right edge still works by touch, so its click is the app's");
+        release(&mut r);
+        slide_right_edge(&mut r, 0.63);
+        assert!(r.engine.freeze_pointer());
+    }
+
+    fn touch_corner(r: &mut Rig) {
+        let s = r.st.section_mut(Section::TopLeft);
+        s.needs_click = Some(false);
+        s.clicks = vec![ClickSpec { action: ClickAction::Lock, value: None }];
+    }
+
+    #[test]
+    fn tapping_a_touch_corner_runs_its_action_and_hides_the_taps_click() {
+        let mut r = Rig::new();
+        touch_corner(&mut r);
+        r.frame(&[(1, 0.05, 0.95)]);
+        r.env.advance(80);
+        r.lift();
+        let fx = r.fx();
+        assert!(fx.contains(&Effect::RunClick(ClickSpec { action: ClickAction::Lock, value: None })), "{fx:?}");
+        // Windows then clicks for the tap: no button bit, so it's swallowed
+        r.tracker.device_has_button = true;
+        r.env.advance(100);
+        assert!(r.engine.mouse_down(&r.tracker, &r.st, &r.env));
+        r.engine.mouse_up(&r.st);
+        // a later tap-click elsewhere is the app's again
+        assert!(!r.engine.mouse_down(&r.tracker, &r.st, &r.env));
+    }
+
+    #[test]
+    fn a_touch_that_moves_lasts_or_isnt_on_a_touch_corner_is_no_tap() {
+        let mut r = Rig::new();
+        touch_corner(&mut r);
+        r.frame(&[(1, 0.05, 0.95)]);
+        r.frame(&[(1, 0.12, 0.90)]); // moved away: pointer use
+        r.lift();
+        r.frame(&[(2, 0.05, 0.95)]);
+        r.env.advance(900); // resting, not tapping
+        r.lift();
+        r.frame(&[(3, 0.95, 0.95)]); // top-right still needs a click
+        r.lift();
+        assert!(!r.fx().iter().any(|e| matches!(e, Effect::RunClick(_))));
+    }
+
+    #[test]
+    fn two_taps_pick_the_second_action_and_a_still_touch_holds() {
+        let mut r = Rig::new();
+        touch_corner(&mut r);
+        let s = r.st.section_mut(Section::TopLeft);
+        s.clicks.push(ClickSpec { action: ClickAction::Mute, value: None });
+        s.long_press = ClickSpec { action: ClickAction::PlayPause, value: None };
+        for id in [1, 2] {
+            r.frame(&[(id, 0.05, 0.95)]);
+            r.env.advance(60);
+            r.lift();
+        }
+        assert!(r.fx().contains(&Effect::RunClick(ClickSpec { action: ClickAction::Mute, value: None })));
+
+        r.frame(&[(3, 0.05, 0.95)]);
+        assert!(r.fx().contains(&Effect::StartHoldTimer));
+        r.env.advance(HOLD_MS as u64);
+        r.engine.hold_timer_fired(&r.st);
+        assert_eq!(r.fx(), vec![Effect::RunClick(ClickSpec { action: ClickAction::PlayPause, value: None })]);
+        r.lift();
+        assert!(!r.fx().iter().any(|e| matches!(e, Effect::RunClick(_))), "lifting after a hold is no tap");
+    }
+
+    #[test]
+    fn a_real_press_on_a_touch_corner_counts_once() {
+        let mut r = Rig::new();
+        touch_corner(&mut r);
+        assert!(press(&mut r, (0.05, 0.95)));
+        release(&mut r);
+        let runs = r.fx().iter().filter(|e| matches!(e, Effect::RunClick(_))).count();
+        assert_eq!(runs, 1);
     }
 
     #[test]

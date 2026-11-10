@@ -343,7 +343,24 @@ def main():
         e = drain(fd, 0.1)
         check("scroll sends no keys", e == [], e)
 
-        # 15. a disabled Margin does nothing
+        # 15. corners that work by touch: a tap runs the 1-tap action, a still touch the hold action
+        def touch(s):
+            s["sections"]["topLeft"]["needsClick"] = False
+            s["sections"]["bottomLeft"] = {"clicks": [{"do": "nextTrack"}], "longPress": {"do": "mute"}, "needsClick": False}
+        write_settings(touch)
+        pad.down(0.03, 0.97)
+        time.sleep(0.06)
+        pad.up()
+        e = drain(fd, 0.8)
+        check("tap on a touch corner -> its action (Super+D)", e == [("META", 1), ("D", 1), ("D", 0), ("META", 0)], e)
+        pad.down(0.03, 0.03)
+        time.sleep(0.8)
+        mid = drain(fd, 0.2)
+        pad.up()
+        late = drain(fd, 0.8)
+        check("touch and hold a touch corner -> its hold action, and no tap after", mid == [("MUTE", 1), ("MUTE", 0)] and late == [], f"mid={mid} late={late}")
+
+        # 16. a disabled Margin does nothing
         write_settings(lambda s: s.update(enabled=False))
         pad.swipe(0.01, 0.30, 0.01, 0.62)
         e = drain(fd)

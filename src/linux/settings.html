@@ -75,8 +75,9 @@
       </label>
       <label class="inline">Edge size <input type="range" id="edgeDepth" min="5" max="25"> <span id="edgeVal" class="note"></span></label>
       <label class="inline">Corner size <input type="range" id="cornerSize" min="8" max="30"> <span id="cornerVal" class="note"></span></label>
+      <label class="inline"><input type="checkbox" id="allClick"> Every corner needs a click</label>
     </div>
-    <p class="hint">On Linux, a slide starts by bringing a finger in from the laptop body onto the edge (no click). Corner presses also click normally, because Margin only listens to the touchpad. Click a section on the map to change it. Changes are saved and applied automatically.</p>
+    <p class="hint">On Linux, a slide starts by bringing a finger in from the laptop body onto the edge (no click). Corners need a click unless you untick "Needs a click" (then a tap is enough). Corner presses and taps also reach the app under the pointer, because Margin only listens to the touchpad. Click a section on the map to change it. Changes are saved and applied automatically.</p>
     <p class="hint" id="apps-note" hidden>Per-app settings in this file are set up in the Windows version; on Linux the settings for all apps are used.</p>
   </section>
   <div class="cols">
@@ -210,14 +211,19 @@ function renderEditor() {
       : (vertical ? "Slide up for more / next, down for less / previous." : "Slide right for forward / next, left for back / previous.");
     h += `<p class="hint">${direction}</p>`;
   } else {
-    h += `<p class="field"><span>Press this corner until the touchpad clicks:</span></p>`;
+    const click = needsClick(selected);
+    h += `<label class="inline"><input type="checkbox" id="needsClick"${click ? " checked" : ""}> Needs a click (untick: a tap is enough)</label>`;
+    h += `<p class="field"><span>${click ? "Press this corner until the touchpad clicks:" : "Tap this corner:"}</span></p>`;
+    const [one, many, hold] = click ? ["1 click", " clicks", "Press and hold"] : ["1 tap", " taps", "Touch and hold"];
     for (let i = 0; i <= HOLD_SLOT; i++) {
       const c = peekSlot(s, i);
-      h += `<div class="field"><span>${i === HOLD_SLOT ? "Press and hold" : i === 0 ? "1 click" : i + 1 + " clicks"}</span><select data-slot="${i}" class="act">${option(CLICKS, c.do || "none")}</select>`;
+      h += `<div class="field"><span>${i === HOLD_SLOT ? hold : i === 0 ? one : i + 1 + many}</span><select data-slot="${i}" class="act">${option(CLICKS, c.do || "none")}</select>`;
       if (NEEDS_VALUE[c.do]) h += `<input type="text" data-val="${i}" class="val" placeholder="${NEEDS_VALUE[c.do]}" value="${esc(c.value || "")}" spellcheck="false" style="margin-top:6px">`;
       h += `</div>`;
     }
-    h += `<p class="hint">Corners react only to a real press, never to a tap. Press and hold means keeping the touchpad pressed for half a second; on Linux the app under the pointer also sees that press. Unused corners stay a normal touchpad.</p>`;
+    h += click
+      ? `<p class="hint">This corner reacts only to a real press, never to a tap. Press and hold means keeping the touchpad pressed for half a second; on Linux the app under the pointer also sees that press. Untick "Needs a click" if your touchpad doesn't click here (many only click near the bottom).</p>`
+      : `<p class="hint">A tap is a quick touch that doesn't move away. Touch and hold means resting the finger still for half a second. On Linux the app under the pointer also sees the tap. Unused corners stay a normal touchpad.</p>`;
   }
   ed.innerHTML = h;
   ed.querySelectorAll("input.val").forEach(markBad);
@@ -257,16 +263,31 @@ async function load() {
   } catch (e) { status("Could not load settings: " + e.message, true); }
 }
 
+const CORNER_KEYS = [...CORNERS];
+// Corners need a click unless the section says otherwise (edges on Linux always slide in).
+function needsClick(k) { return section(k).needsClick !== false; }
+function showAllClick() {
+  const n = CORNER_KEYS.filter(needsClick).length, box = $("#allClick");
+  box.checked = n === CORNER_KEYS.length;
+  box.indeterminate = n > 0 && n < CORNER_KEYS.length;
+}
+
 function renderAll() {
   $("#enabled").checked = !!S.enabled; showEnabled();
   $("#speed").value = S.speed || "medium";
   $("#edgeDepth").value = Math.round(S.edgeDepth * 100); $("#edgeVal").textContent = Math.round(S.edgeDepth * 100) + "%";
   $("#cornerSize").value = Math.round(S.cornerSize * 100); $("#cornerVal").textContent = Math.round(S.cornerSize * 100) + "%";
   $("#apps-note").hidden = !(S.apps && S.apps.length); // per-app settings are kept as they are
-  renderPad(); renderEditor();
+  showAllClick(); renderPad(); renderEditor();
 }
 
 // ---- events ----
+$("#allClick").onchange = () => {
+  // ticked -> nothing needs a click; empty or mixed -> every corner does
+  const click = !CORNER_KEYS.every(needsClick);
+  for (const k of CORNER_KEYS) { if (click) delete section(k).needsClick; else section(k).needsClick = false; }
+  showAllClick(); changed(); renderEditor();
+};
 $("#enabled").onchange = e => { S.enabled = e.target.checked; showEnabled(); changed(); };
 function showEnabled() {
   $("#enabledText").textContent = S.enabled ? "Margin is on" : "Margin is off";
@@ -287,6 +308,10 @@ $("#editor").addEventListener("change", e => {
     const [, f, b, hold] = PRESETS[+t.value];
     s.forward = f; s.back = b; s.holdModifiers = hold; changed(); renderEditor();
   } else if (t.id === "hold") { s.holdModifiers = t.checked; changed(); }
+  else if (t.id === "needsClick") {
+    if (t.checked) delete s.needsClick; else s.needsClick = false;
+    showAllClick(); changed(); renderEditor();
+  }
   else if (t.classList.contains("act")) {
     const c = slot(s, +t.dataset.slot);
     c.do = t.value;

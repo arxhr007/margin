@@ -21,7 +21,7 @@ use super::pad_view::{self, WM_PAD_CLICKED};
 use crate::app;
 use crate::keys;
 use crate::labels;
-use crate::settings::{self, Activation, AppProfile, ClickAction, Section, SectionSettings, Settings, SlideAction, Speed, CORNER_SLOTS, LONG_PRESS_SLOT};
+use crate::settings::{self, AppProfile, ClickAction, Section, SectionSettings, Settings, SlideAction, Speed, CORNER_SLOTS, LONG_PRESS_SLOT};
 use crate::startup;
 
 // control ids
@@ -41,6 +41,7 @@ const ID_BACK_REC: u16 = 205;
 const ID_HOLD: u16 = 206;
 const ID_CUSTOMIZE: u16 = 207;
 const ID_OVERRIDE: u16 = 208;
+const ID_NEEDS_CLICK: u16 = 209;
 
 const TIP_ALL_APPS: &str =
     "Click a section on the touchpad to change it. Orange dots show your fingers. Hold Ctrl + Shift while sliding for fine steps.";
@@ -51,6 +52,7 @@ const WM_REBUILD: u32 = WM_APP + 20;
 // raw control constants (kept numeric to stay independent of the generated wrapper types)
 const BS_PUSHBUTTON: u32 = 0;
 const BS_AUTOCHECKBOX: u32 = 3;
+const BS_3STATE: u32 = 5;
 const BS_GROUPBOX: u32 = 7;
 const CBS_DROPDOWNLIST: u32 = 3;
 const ES_AUTOHSCROLL: u32 = 0x80;
@@ -187,7 +189,7 @@ pub fn reload() {
     end_recording(); // the box being recorded into is about to be rebuilt
     LOADING.with(|l| l.set(true));
     unsafe {
-        SendMessageW(activation, CB_SETCURSEL, WPARAM(if st.activation == Activation::SlideIn { 1 } else { 0 }), LPARAM(0));
+        set_all_click_box(activation, &st);
         SendMessageW(speed, CB_SETCURSEL, WPARAM(st.speed as usize), LPARAM(0));
         refresh_switch_control(enabled, st.enabled);
         SendMessageW(edge_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.edge_depth, 5, 25) as isize));
@@ -358,10 +360,10 @@ fn create_controls(hwnd: HWND) {
 
     // drawn as a large on/off switch (see draw_switch); the text is what screen readers announce
     let enabled = make_child(hwnd, w!("BUTTON"), switch_text(st.enabled), BS_OWNERDRAW as u32 | tab, 0, ID_ENABLED, font);
-    let activation = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_ACTIVATION, font);
+    // one box for every edge and corner at once; it shows a dash when they differ
+    let activation = make_child(hwnd, w!("BUTTON"), "Every edge and corner needs a click", BS_3STATE | tab, 0, ID_ACTIVATION, font);
     let speed = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_SPEED, font);
     let startup = make_child(hwnd, w!("BUTTON"), "Start with Windows", BS_AUTOCHECKBOX | tab, 0, ID_STARTUP, font);
-    let cap_activation = make_child(hwnd, w!("STATIC"), "Start a slide by:", 0, 0, 0, font);
     let cap_speed = make_child(hwnd, w!("STATIC"), "Speed:", 0, 0, 0, font);
     let cap_profile = make_child(hwnd, w!("STATIC"), "Settings for:", 0, 0, 0, font);
     let profile = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_PROFILE, font);
@@ -370,10 +372,7 @@ fn create_controls(hwnd: HWND) {
 
     LOADING.with(|l| l.set(true));
     unsafe {
-        for text in ["Press the edge until it clicks, then slide", "Slide in from the edge (no click)"] {
-            SendMessageW(activation, CB_ADDSTRING, WPARAM(0), LPARAM(wide(text).as_ptr() as isize));
-        }
-        SendMessageW(activation, CB_SETCURSEL, WPARAM(if st.activation == Activation::SlideIn { 1 } else { 0 }), LPARAM(0));
+        set_all_click_box(activation, &st);
         for text in ["Slow", "Medium", "Fast"] {
             SendMessageW(speed, CB_ADDSTRING, WPARAM(0), LPARAM(wide(text).as_ptr() as isize));
         }
@@ -409,7 +408,7 @@ fn create_controls(hwnd: HWND) {
     );
 
     ui(|u| {
-        u.fixed = vec![cap_activation, cap_speed, edge_cap, corner_cap, cap_profile];
+        u.fixed = vec![cap_speed, edge_cap, corner_cap, cap_profile];
         u.profile = profile;
         u.add_app = add_app;
         u.remove_app = remove_app;
@@ -484,12 +483,11 @@ fn layout(hwnd: HWND) {
     let r3 = r2 + row_h + px(8.0, s);
     let mid = (switch_h - row_h) / 2; // centres the first row's other controls on the switch
     move_to(enabled, m - px(2.0, s), r1, px(205.0, s), switch_h);
-    move_to(fixed[0], m + px(220.0, s), r1 + mid + px(4.0, s), px(100.0, s), px(20.0, s));
-    move_to(activation, m + px(325.0, s), r1 + mid, px(300.0, s), px(220.0, s));
-    move_to(fixed[1], m, r2 + px(4.0, s), px(50.0, s), px(20.0, s));
+    move_to(activation, m + px(220.0, s), r1 + mid, px(330.0, s), row_h);
+    move_to(fixed[0], m, r2 + px(4.0, s), px(50.0, s), px(20.0, s));
     move_to(speed, m + px(55.0, s), r2, px(100.0, s), px(160.0, s));
     move_to(startup, m + px(180.0, s), r2, px(180.0, s), row_h);
-    move_to(fixed[4], m, r3 + px(4.0, s), px(90.0, s), px(20.0, s));
+    move_to(fixed[3], m, r3 + px(4.0, s), px(90.0, s), px(20.0, s));
     move_to(profile, m + px(95.0, s), r3, px(200.0, s), px(220.0, s));
     move_to(add_app, m + px(305.0, s), r3 - px(1.0, s), px(110.0, s), px(26.0, s));
     move_to(remove_app, m + px(423.0, s), r3 - px(1.0, s), px(80.0, s), px(26.0, s));
@@ -500,9 +498,9 @@ fn layout(hwnd: HWND) {
     let tip_y = ch - m - tip_h;
     let trk_y = tip_y - trk_h - px(4.0, s);
     move_to(tip, m, tip_y, cw - 2 * m, tip_h);
-    move_to(fixed[2], m, trk_y + px(8.0, s), px(70.0, s), px(20.0, s));
+    move_to(fixed[1], m, trk_y + px(8.0, s), px(70.0, s), px(20.0, s));
     move_to(edge_trk, m + px(72.0, s), trk_y, px(170.0, s), trk_h);
-    move_to(fixed[3], m + px(270.0, s), trk_y + px(8.0, s), px(80.0, s), px(20.0, s));
+    move_to(fixed[2], m + px(270.0, s), trk_y + px(8.0, s), px(80.0, s), px(20.0, s));
     move_to(corner_trk, m + px(352.0, s), trk_y, px(170.0, s), trk_h);
 
     // middle: pad on the left, editor group on the right
@@ -585,6 +583,18 @@ impl Cursor {
         let row = px(24.0, self.scale);
         move_to(h, self.x, self.y, self.width, px(260.0, self.scale));
         self.y += row + px(below, self.scale);
+        self.register(h, false);
+        h
+    }
+
+    /// A checkbox on its own line.
+    fn check(&mut self, id: u16, text: &str, checked: bool, below: f32) -> HWND {
+        let h = make_child(self.parent, w!("BUTTON"), text, BS_AUTOCHECKBOX | WS_TABSTOP.0, 0, id, self.font);
+        unsafe {
+            SendMessageW(h, BM_SETCHECK, WPARAM(checked as usize), LPARAM(0));
+        }
+        move_to(h, self.x, self.y, self.width, px(22.0, self.scale));
+        self.y += px(22.0 + below, self.scale);
         self.register(h, false);
         h
     }
@@ -718,12 +728,14 @@ fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
     } else {
         "Slide right for forward / next, left for back / previous."
     };
-    let how = if st.activation == Activation::Press {
+    let click = st.needs_click(section);
+    let how = if click {
         "Rest a finger on the edge, press until the touchpad clicks, and slide without letting go."
     } else {
         "Bring your finger in from the laptop body onto this edge, then slide along it. No click needed."
     };
     c.para(direction, false, false, 6.0);
+    c.check(ID_NEEDS_CLICK, "Needs a click", click, 4.0);
     c.para(how, false, true, 6.0);
 }
 
@@ -766,15 +778,20 @@ fn build_custom_keys(c: &mut Cursor, section: Section, v: &crate::settings::Sect
 
 fn build_corner(c: &mut Cursor, section: Section, st: &Settings) {
     let v = st.section(section).clone();
-    c.para("Press this corner until the touchpad clicks:", true, false, 2.0);
+    let click = st.needs_click(section);
+    c.check(ID_NEEDS_CLICK, "Needs a click (untick: a tap is enough)", click, 8.0);
+    c.para(if click { "Press this corner until the touchpad clicks:" } else { "Tap this corner:" }, true, false, 2.0);
     let names: Vec<&str> = ClickAction::ALL.iter().map(|&a| labels::click_long(a)).collect();
     for i in 0..CORNER_SLOTS {
         let spec = v.corner_slot(i);
         c.gap(6.0);
-        let title = match i {
-            0 => "1 click".to_string(),
-            LONG_PRESS_SLOT => "Press and hold".to_string(),
-            n => format!("{} clicks", n + 1),
+        let title = match (i, click) {
+            (0, true) => "1 click".to_string(),
+            (0, false) => "1 tap".to_string(),
+            (LONG_PRESS_SLOT, true) => "Press and hold".to_string(),
+            (LONG_PRESS_SLOT, false) => "Touch and hold".to_string(),
+            (n, true) => format!("{} clicks", n + 1),
+            (n, false) => format!("{} taps", n + 1),
         };
         c.para(&title, false, false, 2.0);
         let base = ID_CORNER_BASE + (i as u16) * 10;
@@ -792,12 +809,12 @@ fn build_corner(c: &mut Cursor, section: Section, st: &Settings) {
         }
     }
     c.gap(10.0);
-    c.para(
-        "Corners react only to a real press, never to a tap. Press and hold means keeping the touchpad pressed for half a          second. Unused corners stay normal touchpad.",
-        false,
-        true,
-        0.0,
-    );
+    let hint = if click {
+        "This corner reacts only to a real press, never to a tap. Press and hold means keeping the touchpad pressed for half a second. Untick \"Needs a click\" if your touchpad doesn't click here (many only click near the bottom)."
+    } else {
+        "A tap is a quick touch that doesn't move away; the tap's own click is hidden from apps. Touch and hold means resting the finger still for half a second. Unused corners stay normal touchpad."
+    };
+    c.para(hint, false, true, 0.0);
 }
 
 // ---------------------------------------------------------------- change handling
@@ -817,6 +834,19 @@ fn refresh_switch_control(control: HWND, on: bool) {
         let t = wide(switch_text(on));
         let _ = SetWindowTextW(control, PCWSTR(t.as_ptr()));
         let _ = InvalidateRect(control, None, true);
+    }
+}
+
+/// The "every edge and corner needs a click" box: ticked, empty, or a dash when the sections differ.
+fn set_all_click_box(control: HWND, st: &Settings) {
+    const BST_INDETERMINATE: usize = 2;
+    let state = match st.all_need_click() {
+        Some(true) => 1,
+        Some(false) => 0,
+        None => BST_INDETERMINATE,
+    };
+    unsafe {
+        SendMessageW(control, BM_SETCHECK, WPARAM(state), LPARAM(0));
     }
 }
 
@@ -957,11 +987,24 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             changed();
             refresh_switch_control(control, on);
         }
-        ID_ACTIVATION if code == CBN_SELCHANGE => {
-            let slide_in = combo_index(control) == 1;
-            app::edit_settings(|s| s.activation = if slide_in { Activation::SlideIn } else { Activation::Press });
+        ID_ACTIVATION if code == BN_CLICKED => {
+            // ticked -> nothing needs a click; empty or mixed -> everything does
+            let click = app::read_settings(|s| s.all_need_click() != Some(true)).unwrap_or(true);
+            app::edit_settings(|s| s.set_all_need_click(click));
             changed();
-            build_detail(section); // refresh the how-to text
+            if let Some(st) = app::read_settings(|s| s.clone()) {
+                set_all_click_box(control, &st);
+            }
+            build_detail(section); // the section's own box and how-to text
+        }
+        ID_NEEDS_CLICK if code == 0 => {
+            let click = is_checked(control);
+            edit_section(section, |v| v.needs_click = Some(click));
+            changed();
+            if let (Some(header), Some(st)) = (ui(|u| u.activation), app::read_settings(|s| s.clone())) {
+                set_all_click_box(header, &st);
+            }
+            post_rebuild(hwnd); // titles say click or tap
         }
         ID_SPEED if code == CBN_SELCHANGE => {
             let speed = [Speed::Slow, Speed::Medium, Speed::Fast][combo_index(control).min(2)];

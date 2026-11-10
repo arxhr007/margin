@@ -9,7 +9,7 @@ use super::devices::{self, Probe, Touchpad};
 use super::output::Output;
 use super::sys::Fd;
 use crate::engine::{Effect, Engine, Env, HOLD_MS, MULTI_CLICK_MS};
-use crate::settings::{self, Activation, Settings};
+use crate::settings::{self, Activation, Section, Settings};
 use crate::touchpad::tracker::TouchTracker;
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -31,9 +31,12 @@ impl Env for LinuxEnv {
 }
 
 /// Edge slides on Linux always start by sliding in from the edge. Press-and-slide needs the click to be
-/// hidden from the desktop, which a passive reader can't do.
+/// hidden from the desktop, which a passive reader can't do. Corners keep their own choice.
 fn prepared(mut s: Settings) -> Settings {
     s.activation = Activation::SlideIn;
+    for edge in [Section::Left, Section::Right, Section::Top, Section::Bottom] {
+        s.section_mut(edge).needs_click = None;
+    }
     s
 }
 
@@ -145,7 +148,7 @@ impl Daemon {
             self.prev_button = frame.button;
             if frame.button {
                 // The desktop also sees this click: a passive reader can't hide it.
-                self.engine.mouse_down(&self.tracker, &self.settings);
+                self.engine.mouse_down(&self.tracker, &self.settings, &LinuxEnv);
             } else {
                 self.engine.mouse_up(&self.settings);
             }
