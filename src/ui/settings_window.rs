@@ -14,14 +14,14 @@ use windows::Win32::UI::Controls::Dialogs::{GetOpenFileNameW, OFN_FILEMUSTEXIST,
 use windows::Win32::UI::Controls::*;
 use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetKeyState, SetFocus, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::pad_view::{self, WM_PAD_CLICKED};
 use crate::app;
 use crate::keys;
 use crate::labels;
-use crate::settings::{Activation, ClickAction, Section, Settings, SlideAction, Speed, CORNER_SLOTS, LONG_PRESS_SLOT};
+use crate::settings::{self, Activation, AppProfile, ClickAction, Section, SectionSettings, Settings, SlideAction, Speed, CORNER_SLOTS, LONG_PRESS_SLOT};
 use crate::startup;
 
 // control ids
@@ -29,6 +29,9 @@ const ID_ENABLED: u16 = 100;
 const ID_ACTIVATION: u16 = 101;
 const ID_SPEED: u16 = 102;
 const ID_STARTUP: u16 = 103;
+const ID_PROFILE: u16 = 104;
+const ID_ADD_APP: u16 = 105;
+const ID_REMOVE_APP: u16 = 106;
 const ID_SLIDE: u16 = 200;
 const ID_PRESET: u16 = 201;
 const ID_FWD_BOX: u16 = 202;
@@ -37,6 +40,10 @@ const ID_BACK_BOX: u16 = 204;
 const ID_BACK_REC: u16 = 205;
 const ID_HOLD: u16 = 206;
 const ID_CUSTOMIZE: u16 = 207;
+const ID_OVERRIDE: u16 = 208;
+
+const TIP_ALL_APPS: &str =
+    "Click a section on the touchpad to change it. Orange dots show your fingers. Hold Ctrl + Shift while sliding for fine steps.";
 const ID_CORNER_BASE: u16 = 300; // + slot * 10: +0 combo, +1 value, +2 browse; slots 0-2 clicks, 3 hold
 
 const WM_REBUILD: u32 = WM_APP + 20;
@@ -84,6 +91,10 @@ struct Ui {
     activation: HWND,
     speed: HWND,
     startup: HWND,
+    /// "Settings for:" list of All apps and the per-app profiles, with its Add / Remove buttons
+    profile: HWND,
+    add_app: HWND,
+    remove_app: HWND,
     pad: HWND,
     group: HWND,
     edge_trk: HWND,
@@ -105,6 +116,33 @@ thread_local! {
     /// The shortcut box currently listening for a key combination (0 = none).
     static RECORDING: Cell<isize> = const { Cell::new(0) };
     static RECORD_BUTTON: Cell<isize> = const { Cell::new(0) };
+    /// The app whose settings are shown (`None` = all apps).
+    static PROFILE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// The app whose settings the window shows, or `None` for all apps.
+pub fn selected_profile() -> Option<String> {
+    PROFILE.with(|p| p.borrow().clone())
+}
+
+/// The settings the window shows: those for all apps, or the chosen app's.
+pub fn view_settings() -> Settings {
+    let profile = selected_profile();
+    app::read_settings(|s| s.for_app(profile.as_deref())).unwrap_or_default()
+}
+
+/// Whether the chosen app has its own settings for this section.
+pub fn overrides(section: Section) -> bool {
+    match selected_profile() {
+        Some(app) => app::read_settings(|s| s.overrides(&app, section)).unwrap_or(false),
+        None => false,
+    }
+}
+
+/// Edits a section: the chosen app's own copy, or the one for all apps.
+fn edit_section<R>(section: Section, f: impl FnOnce(&mut SectionSettings) -> R) -> Option<R> {
+    let profile = selected_profile();
+    app::edit_settings(|s| f(s.section_for_edit(section, profile.as_deref())))
 }
 
 fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> Option<R> {
@@ -155,6 +193,7 @@ pub fn reload() {
         let _ = InvalidateRect(pad, None, false);
     }
     LOADING.with(|l| l.set(false));
+    fill_profiles();
     post_rebuild(hwnd); // the section editor reads the new settings when it is rebuilt
 }
 
@@ -233,6 +272,9 @@ fn create() {
                 activation: HWND::default(),
                 speed: HWND::default(),
                 startup: HWND::default(),
+                profile: HWND::default(),
+                add_app: HWND::default(),
+                remove_app: HWND::default(),
                 pad: HWND::default(),
                 group: HWND::default(),
                 edge_trk: HWND::default(),
@@ -315,6 +357,10 @@ fn create_controls(hwnd: HWND) {
     let startup = make_child(hwnd, w!("BUTTON"), "Start with Windows", BS_AUTOCHECKBOX | tab, 0, ID_STARTUP, font);
     let cap_activation = make_child(hwnd, w!("STATIC"), "Start a slide by:", 0, 0, 0, font);
     let cap_speed = make_child(hwnd, w!("STATIC"), "Speed:", 0, 0, 0, font);
+    let cap_profile = make_child(hwnd, w!("STATIC"), "Settings for:", 0, 0, 0, font);
+    let profile = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_PROFILE, font);
+    let add_app = make_child(hwnd, w!("BUTTON"), "Add an app\u{2026}", BS_PUSHBUTTON | tab, 0, ID_ADD_APP, font);
+    let remove_app = make_child(hwnd, w!("BUTTON"), "Remove", BS_PUSHBUTTON | tab, 0, ID_REMOVE_APP, font);
 
     LOADING.with(|l| l.set(true));
     unsafe {
@@ -350,7 +396,7 @@ fn create_controls(hwnd: HWND) {
     let tip = make_child(
         hwnd,
         w!("STATIC"),
-        "Click a section on the touchpad to change it. Orange dots show your fingers. Hold Ctrl + Shift while sliding for fine steps.",
+        TIP_ALL_APPS,
         SS_NOPREFIX,
         0,
         0,
@@ -358,7 +404,10 @@ fn create_controls(hwnd: HWND) {
     );
 
     ui(|u| {
-        u.fixed = vec![cap_activation, cap_speed, edge_cap, corner_cap];
+        u.fixed = vec![cap_activation, cap_speed, edge_cap, corner_cap, cap_profile];
+        u.profile = profile;
+        u.add_app = add_app;
+        u.remove_app = remove_app;
         u.enabled = enabled;
         u.activation = activation;
         u.speed = speed;
@@ -370,6 +419,35 @@ fn create_controls(hwnd: HWND) {
         u.tip = tip;
         u.gray.insert(tip.0 as isize);
     });
+    fill_profiles();
+}
+
+/// Fills the "Settings for" list and selects the chosen app, falling back to all apps when that app's
+/// profile is gone.
+fn fill_profiles() {
+    let Some((profile, remove, tip)) = ui(|u| (u.profile, u.remove_app, u.tip)) else { return };
+    let apps: Vec<String> = app::read_settings(|s| s.apps.iter().map(|p| settings::app_name(&p.app)).collect()).unwrap_or_default();
+    let chosen = selected_profile().map(|a| settings::app_name(&a)).filter(|a| apps.contains(a));
+    PROFILE.with(|p| *p.borrow_mut() = chosen.clone());
+    LOADING.with(|l| l.set(true));
+    unsafe {
+        SendMessageW(profile, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
+        SendMessageW(profile, CB_ADDSTRING, WPARAM(0), LPARAM(wide("All apps").as_ptr() as isize));
+        for a in &apps {
+            SendMessageW(profile, CB_ADDSTRING, WPARAM(0), LPARAM(wide(a).as_ptr() as isize));
+        }
+        let index = chosen.and_then(|c| apps.iter().position(|a| *a == c)).map_or(0, |i| i + 1);
+        SendMessageW(profile, CB_SETCURSEL, WPARAM(index), LPARAM(0));
+        let _ = EnableWindow(remove, index > 0);
+        // the hint line explains what the chosen view edits
+        let text = match selected_profile() {
+            Some(app) => format!("Orange: different in {app}. The rest uses the settings for all apps until you tick \"Different in {app}\"."),
+            None => TIP_ALL_APPS.to_string(),
+        };
+        let t = wide(&text);
+        let _ = SetWindowTextW(tip, PCWSTR(t.as_ptr()));
+    }
+    LOADING.with(|l| l.set(false));
 }
 
 fn move_to(h: HWND, x: i32, y: i32, w: i32, hgt: i32) {
@@ -380,8 +458,8 @@ fn move_to(h: HWND, x: i32, y: i32, w: i32, hgt: i32) {
 
 /// Positions every fixed control for the current client size and DPI.
 fn layout(hwnd: HWND) {
-    let Some((u_dpi, fixed, enabled, activation, speed, startup, pad, group, edge_trk, corner_trk, tip)) = ui(|u| {
-        (u.dpi, u.fixed.clone(), u.enabled, u.activation, u.speed, u.startup, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip)
+    let Some((u_dpi, fixed, enabled, activation, speed, startup, pad, group, edge_trk, corner_trk, tip, profile, add_app, remove_app)) = ui(|u| {
+        (u.dpi, u.fixed.clone(), u.enabled, u.activation, u.speed, u.startup, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip, u.profile, u.add_app, u.remove_app)
     }) else {
         return;
     };
@@ -393,15 +471,20 @@ fn layout(hwnd: HWND) {
     let (cw, ch) = (client.right, client.bottom);
     let m = px(12.0, s);
 
-    // header, two rows
+    // header, three rows
     let row_h = px(24.0, s);
     let (r1, r2) = (m, m + row_h + px(8.0, s));
+    let r3 = r2 + row_h + px(8.0, s);
     move_to(enabled, m, r1, px(130.0, s), row_h);
     move_to(fixed[0], m + px(150.0, s), r1 + px(4.0, s), px(100.0, s), px(20.0, s));
     move_to(activation, m + px(255.0, s), r1, px(300.0, s), px(220.0, s));
     move_to(fixed[1], m, r2 + px(4.0, s), px(50.0, s), px(20.0, s));
     move_to(speed, m + px(55.0, s), r2, px(100.0, s), px(160.0, s));
     move_to(startup, m + px(180.0, s), r2, px(180.0, s), row_h);
+    move_to(fixed[4], m, r3 + px(4.0, s), px(90.0, s), px(20.0, s));
+    move_to(profile, m + px(95.0, s), r3, px(200.0, s), px(220.0, s));
+    move_to(add_app, m + px(305.0, s), r3 - px(1.0, s), px(110.0, s), px(26.0, s));
+    move_to(remove_app, m + px(423.0, s), r3 - px(1.0, s), px(80.0, s), px(26.0, s));
 
     // footer
     let tip_h = px(20.0, s);
@@ -415,7 +498,7 @@ fn layout(hwnd: HWND) {
     move_to(corner_trk, m + px(352.0, s), trk_y, px(170.0, s), trk_h);
 
     // middle: pad on the left, editor group on the right
-    let top = r2 + row_h + px(12.0, s);
+    let top = r3 + row_h + px(12.0, s);
     let bottom = trk_y - px(8.0, s);
     let group_w = px(330.0, s);
     let gap = px(10.0, s);
@@ -561,11 +644,32 @@ fn build_detail(section: Section) {
     }
     let pad = px(12.0, scale);
     let mut c = Cursor { x: r.left + pad, y: r.top + px(24.0, scale), width: r.right - 2 * pad, scale, parent, font, bold };
-    let st = app::read_settings(|s| s.clone()).unwrap_or_default();
+    let st = view_settings();
+    let profile = selected_profile();
+    let own = overrides(section);
+    if let Some(app) = &profile {
+        let check = make_child(parent, w!("BUTTON"), &format!("Different in {app}"), BS_AUTOCHECKBOX | WS_TABSTOP.0, 0, ID_OVERRIDE, bold);
+        unsafe {
+            SendMessageW(check, BM_SETCHECK, WPARAM(own as usize), LPARAM(0));
+        }
+        move_to(check, c.x, c.y, c.width, px(22.0, scale));
+        c.y += px(30.0, scale);
+        c.register(check, false);
+    }
+    let first_editor_control = ui(|u| u.detail.len()).unwrap_or(0);
     if section.is_corner() {
         build_corner(&mut c, section, &st);
     } else {
         build_edge(&mut c, section, &st);
+    }
+    if profile.is_some() && !own {
+        // shown for reference: these are the all-apps settings, edited when "All apps" is chosen
+        let list = ui(|u| u.detail[first_editor_control..].to_vec()).unwrap_or_default();
+        for h in list {
+            unsafe {
+                let _ = EnableWindow(h, false);
+            }
+        }
     }
     unsafe {
         let _ = InvalidateRect(parent, None, true);
@@ -686,6 +790,10 @@ fn build_corner(c: &mut Cursor, section: Section, st: &Settings) {
 
 fn changed() {
     app::settings_changed();
+    refresh_pad();
+}
+
+fn refresh_pad() {
     ui(|u| unsafe {
         let _ = InvalidateRect(u.pad, None, false);
     });
@@ -763,10 +871,56 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             changed();
         }
         ID_STARTUP if code == 0 => startup::set_enabled(is_checked(control)),
+        ID_PROFILE if code == CBN_SELCHANGE => {
+            let index = combo_index(control);
+            let apps: Vec<String> = app::read_settings(|s| s.apps.iter().map(|p| settings::app_name(&p.app)).collect()).unwrap_or_default();
+            PROFILE.with(|p| *p.borrow_mut() = index.checked_sub(1).and_then(|i| apps.get(i).cloned()));
+            fill_profiles();
+            refresh_pad();
+            post_rebuild(hwnd);
+        }
+        ID_ADD_APP if code == 0 => {
+            if let Some(path) = browse_for_app(hwnd) {
+                let name = settings::app_name(&path);
+                if !name.is_empty() {
+                    app::edit_settings(|s| {
+                        if s.profile(&name).is_none() {
+                            s.apps.push(AppProfile { app: name.clone(), sections: Default::default() });
+                        }
+                    });
+                    changed();
+                    PROFILE.with(|p| *p.borrow_mut() = Some(name));
+                    fill_profiles();
+                    refresh_pad();
+                    post_rebuild(hwnd);
+                }
+            }
+        }
+        ID_REMOVE_APP if code == 0 => {
+            if let Some(name) = selected_profile() {
+                let question = wide(&format!("Remove the settings for {name}? It will use the settings for all apps again."));
+                let answer = unsafe { MessageBoxW(hwnd, PCWSTR(question.as_ptr()), w!("Margin"), MB_YESNO | MB_ICONQUESTION) };
+                if answer == IDYES {
+                    app::edit_settings(|s| s.apps.retain(|p| settings::app_name(&p.app) != name));
+                    changed();
+                    PROFILE.with(|p| *p.borrow_mut() = None);
+                    fill_profiles();
+                    refresh_pad();
+                    post_rebuild(hwnd);
+                }
+            }
+        }
+        ID_OVERRIDE if code == 0 => {
+            if let Some(name) = selected_profile() {
+                let own = is_checked(control);
+                app::edit_settings(|s| s.set_override(&name, section, own));
+                changed();
+                post_rebuild(hwnd);
+            }
+        }
         ID_SLIDE if code == CBN_SELCHANGE => {
             let action = SlideAction::ALL[combo_index(control).min(SlideAction::ALL.len() - 1)];
-            app::edit_settings(|s| {
-                let v = s.section_mut(section);
+            edit_section(section, |v| {
                 v.slide = action;
                 if action == SlideAction::Custom && v.forward.as_deref().unwrap_or("").trim().is_empty() && v.back.as_deref().unwrap_or("").trim().is_empty() {
                     v.forward = Some("Ctrl+Tab".into());
@@ -781,8 +935,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             let index = combo_index(control);
             if index > 0 {
                 let (_, fwd, back, hold) = KEY_PRESETS[index - 1];
-                app::edit_settings(|s| {
-                    let v = s.section_mut(section);
+                edit_section(section, |v| {
                     v.forward = Some(fwd.into());
                     v.back = Some(back.into());
                     v.hold_modifiers = hold;
@@ -794,8 +947,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         ID_FWD_BOX | ID_BACK_BOX if code == EN_CHANGE => {
             let text = read_text(control);
             let value = (!text.is_empty()).then_some(text);
-            app::edit_settings(|s| {
-                let v = s.section_mut(section);
+            edit_section(section, |v| {
                 if id == ID_FWD_BOX {
                     v.forward = value;
                 } else {
@@ -808,8 +960,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         ID_FWD_REC | ID_BACK_REC if code == 0 => begin_recording(id),
         ID_CUSTOMIZE if code == 0 => {
             // start from what "Switch tabs" does today, so nothing changes until the user edits it
-            app::edit_settings(|s| {
-                let v = s.section_mut(section);
+            edit_section(section, |v| {
                 v.slide = SlideAction::Custom;
                 v.forward = Some("Alt+Tab".into());
                 v.back = Some("Alt+Shift+Tab".into());
@@ -820,7 +971,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         }
         ID_HOLD if code == 0 => {
             let on = is_checked(control);
-            app::edit_settings(|s| s.section_mut(section).hold_modifiers = on);
+            edit_section(section, |v| v.hold_modifiers = on);
             changed();
         }
         _ if (ID_CORNER_BASE..ID_CORNER_BASE + 10 * CORNER_SLOTS as u16).contains(&id) => {
@@ -836,8 +987,8 @@ fn on_corner_command(hwnd: HWND, id: u16, code: u32, control: HWND, section: Sec
     match part {
         0 if code == CBN_SELCHANGE => {
             let action = ClickAction::ALL[combo_index(control).min(ClickAction::ALL.len() - 1)];
-            app::edit_settings(|s| {
-                let spec = s.section_mut(section).corner_slot_mut(slot);
+            edit_section(section, |v| {
+                let spec = v.corner_slot_mut(slot);
                 spec.action = action;
                 if !labels::needs_value(action) {
                     spec.value = None;
@@ -849,8 +1000,8 @@ fn on_corner_command(hwnd: HWND, id: u16, code: u32, control: HWND, section: Sec
         1 if code == EN_CHANGE => {
             let text = read_text(control);
             let value = (!text.is_empty()).then_some(text);
-            app::edit_settings(|s| s.section_mut(section).corner_slot_mut(slot).value = value);
-            let is_keys = app::read_settings(|s| s.section(section).corner_slot(slot).action == ClickAction::Keys).unwrap_or(false);
+            edit_section(section, |v| v.corner_slot_mut(slot).value = value);
+            let is_keys = view_settings().section(section).corner_slot(slot).action == ClickAction::Keys;
             if is_keys {
                 mark_validity(control);
             }
@@ -996,7 +1147,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             let dpi = GetDpiForWindow(hwnd).max(96);
             let info = &mut *(lparam.0 as *mut MINMAXINFO);
             info.ptMinTrackSize.x = (800.0 * dpi as f32 / 96.0) as i32;
-            info.ptMinTrackSize.y = (640.0 * dpi as f32 / 96.0) as i32;
+            info.ptMinTrackSize.y = (670.0 * dpi as f32 / 96.0) as i32;
             return LRESULT(0);
         }
         WM_DPICHANGED_ => {
@@ -1015,7 +1166,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             return LRESULT(0);
         }
         WM_PAD_CLICKED => {
-            build_detail(Section::ALL[wparam.0.min(Section::ALL.len() - 1)]);
+            let section = Section::ALL[wparam.0.min(Section::ALL.len() - 1)];
+            pad_view::select(section); // already done for a click on the map; keeps both in step otherwise
+            refresh_pad();
+            build_detail(section);
             return LRESULT(0);
         }
         WM_REBUILD => {
