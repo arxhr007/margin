@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/settings.png" alt="The Margin settings window: a map of the touchpad with every edge and corner assigned" width="760">
+  <img src="docs/images/settings.png" alt="The Margin settings window: the on/off switch, a map of the touchpad with every edge and corner assigned, and the editor for the top edge" width="760">
 </p>
 
 Most laptop touchpads only use their middle for gestures. Margin uses the unused strip around the outside:
@@ -91,7 +91,7 @@ cargo build --release     # target/release/margin  (margin.exe on Windows)
 <table>
   <tr>
     <td width="50%"><img src="docs/images/custom-keys.png" alt="Custom keys editor with Alt+Tab recorded for the top edge"><br><sub><b>Custom keys.</b> Record a shortcut for each slide direction, or pick a preset.</sub></td>
-    <td width="50%"><img src="docs/images/corner-actions.png" alt="Corner editor with different actions for one, two and three presses"><br><sub><b>Corners.</b> One, two or three presses each run a different action.</sub></td>
+    <td width="50%"><img src="docs/images/corner-actions.png" alt="Corner editor with different actions for one, two and three presses and for press and hold"><br><sub><b>Corners.</b> One, two or three presses, or a press and hold, each run a different action.</sub></td>
   </tr>
 </table>
 
@@ -169,6 +169,10 @@ Your system keeps a few combinations to itself (Alt+Tab, anything with the Windo
 ## Per-app settings
 
 On Windows, any edge or corner can do something else while a particular app is the window in front. In the settings window, choose **Add an app…** next to **Settings for**, and pick the app's program (for example `vlc.exe`). With that app chosen in the list, click a section on the map and tick **Different in vlc** to give it its own action. Sections with their own action for the chosen app have an orange outline; the rest follow the settings for all apps.
+
+<p align="center">
+  <img src="docs/images/per-app.png" alt="Settings for vlc: the bottom edge is set to Seek and ticked Different in vlc; it and the bottom-right corner have orange outlines" width="760">
+</p>
 
 Margin checks which app is in front when a slide or press starts, and a slide keeps those settings until you lift your finger, even when it switches to another app (as Alt+Tab does). On Linux, per-app settings in the file are kept but not used, because Wayland has no common way to tell which app is in front.
 
