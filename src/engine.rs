@@ -106,6 +106,11 @@ impl Engine {
         self.run.is_some()
     }
 
+    /// No slide running and no click held or waiting for more clicks: the settings can change.
+    pub fn is_idle(&self) -> bool {
+        !self.is_sliding() && !self.holding_click && self.click_corner.is_none()
+    }
+
     // ---------------- touch frames ----------------
 
     /// Call after every complete touch frame.
@@ -996,6 +1001,23 @@ mod tests {
         assert!(!r.fx().contains(&Effect::StartHoldTimer));
         release(&mut r);
         assert_eq!(runs(r.fx()), vec![ClickAction::Notifications]);
+    }
+
+    #[test]
+    fn idle_only_between_gestures() {
+        let mut r = Rig::new();
+        assert!(r.engine.is_idle());
+        r.frame(&[(1, 0.01, 0.50)]);
+        r.frame(&[(1, 0.01, 0.56)]); // slide on the left edge has started
+        assert!(!r.engine.is_idle(), "a slide keeps its settings");
+        r.lift();
+        assert!(r.engine.is_idle());
+        assert!(press(&mut r, (0.95, 0.95))); // top-right: waits for a second click
+        assert!(!r.engine.is_idle(), "the click is held");
+        release(&mut r);
+        assert!(!r.engine.is_idle(), "a second click may follow");
+        r.engine.click_timer_fired(&r.st);
+        assert!(r.engine.is_idle());
     }
 
     #[test]

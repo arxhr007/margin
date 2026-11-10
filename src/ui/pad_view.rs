@@ -22,6 +22,8 @@ pub const CLASS: windows::core::PCWSTR = w!("MarginPadView");
 pub const WM_PAD_CLICKED: u32 = WM_APP + 10;
 
 const ACCENT: (u8, u8, u8) = (0, 103, 192);
+/// Outline of a section the chosen app has its own settings for (Margin's orange).
+const OWN: (u8, u8, u8) = (230, 120, 0);
 const PAD_FILL: (u8, u8, u8) = (242, 243, 245);
 const TIMER_REPAINT: usize = 1;
 
@@ -260,7 +262,7 @@ unsafe fn paint(hwnd: HWND, hdc: HDC, client: RECT) {
     let font_right_bold = make_font(scale, 9.0, true, 2700);
     SetBkMode(hdc, TRANSPARENT);
 
-    let st = app::read_settings(|s| s.clone()).unwrap_or_default();
+    let st = super::settings_window::view_settings();
     for &s in geometry::ALL.iter() {
         let index = Section::ALL.iter().position(|&x| x == s).unwrap_or(0);
         let mut r = to_screen(geometry::bounds(s, &st), pad);
@@ -279,6 +281,9 @@ unsafe fn paint(hwnd: HWND, hdc: HDC, client: RECT) {
         let fill = if alpha > 0 { CreateSolidBrush(blend(ACCENT, alpha, PAD_FILL)) } else { HBRUSH(GetStockObject(NULL_BRUSH).0) };
         let pen = if is_selected {
             CreatePen(PS_SOLID, ((2.5 * scale).round() as i32).max(1), rgb(ACCENT.0, ACCENT.1, ACCENT.2))
+        } else if super::settings_window::overrides(s) {
+            // this app has its own settings for the section
+            CreatePen(PS_SOLID, ((2.0 * scale).round() as i32).max(1), rgb(OWN.0, OWN.1, OWN.2))
         } else {
             let edge = blend((120, 120, 128), if assigned { 140 } else { 90 }, PAD_FILL);
             CreatePen(if assigned { PS_SOLID } else { PS_DASH }, 1, edge)

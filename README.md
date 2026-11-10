@@ -25,6 +25,7 @@ Most laptop touchpads only use their middle for gestures. Margin uses the unused
 - **Slide a finger along an edge** to change volume or screen brightness, scrub a video, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed.
 - **Press a corner** once, twice or three times, or press and hold it, to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
 - **Record your own shortcuts** for each slide direction, so an edge can drive any app.
+- **Change things per app** (Windows): the bottom edge can seek in your video player and switch tabs in your browser.
 
 Everything in the middle of the touchpad stays a normal touchpad. Margin is one small native program (about 0.6 MB) that needs nothing installed, uses no network and sends no telemetry.
 
@@ -83,7 +84,7 @@ cargo build --release     # target/release/margin  (margin.exe on Windows)
 
 ## Contents
 
-[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [Code signing policy](#code-signing-policy) · [Contributing](#contributing) · [License](#license)
+[Screenshots](#screenshots) · [Using Margin](#using-margin) · [Custom keys](#custom-keys) · [Per-app settings](#per-app-settings) · [Linux](#linux) · [Settings file](#settings-file) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Build and test](#build-and-test) · [Related projects](#related-projects) · [Code signing policy](#code-signing-policy) · [Contributing](#contributing) · [License](#license)
 
 ## Screenshots
 
@@ -165,6 +166,12 @@ Your system keeps a few combinations to itself (Alt+Tab, anything with the Windo
 | Arrow keys | `Right` | `Left` | no |
 | Redo / undo | `Ctrl+Y` | `Ctrl+Z` | no |
 
+## Per-app settings
+
+On Windows, any edge or corner can do something else while a particular app is the window in front. In the settings window, choose **Add an app…** next to **Settings for**, and pick the app's program (for example `vlc.exe`). With that app chosen in the list, click a section on the map and tick **Different in vlc** to give it its own action. Sections with their own action for the chosen app have an orange outline; the rest follow the settings for all apps.
+
+Margin checks which app is in front when a slide or press starts, and a slide keeps those settings until you lift your finger, even when it switches to another app (as Alt+Tab does). On Linux, per-app settings in the file are kept but not used, because Wayland has no common way to tell which app is in front.
+
 ## Linux
 
 Margin on Linux is a small background program (a systemd user service) plus a settings page in your browser. It works on Wayland and X11 alike, because it reads the touchpad and sends keys at the kernel level instead of talking to a display server. **This is the first Linux release (v0.4.0):** it is tested end to end with a virtual touchpad and in CI, but not yet across many real laptops and desktops, so bug reports are welcome.
@@ -202,6 +209,7 @@ sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trig
 | Fine steps (Ctrl+Shift) | yes | not yet |
 | Switch virtual desktops | Ctrl+Win+Left/Right | Ctrl+Super+Left/Right; some desktops use other keys, so use Custom keys there |
 | Settings | native window and tray icon | page in your browser, no tray icon |
+| Per-app settings | yes | not yet: the settings for all apps are used |
 
 `margin settings` only listens on `127.0.0.1` and every request needs a random key that is part of the link it prints, so other programs and web pages can't change your settings (they could otherwise add a "run a command" corner). Changes you make there are applied by the running program within a second.
 
@@ -249,6 +257,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `clicks[].do` | `none`, `mute`, `playPause`, `nextTrack`, `prevTrack`, `screenshot`, `taskView`, `showDesktop`, `lock`, `notifications`, `app`, `url`, `keys`, `command` |
 | `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command` |
 | `longPress` | the action for pressing and holding the corner, with the same `do` and `value` as a click |
+| `apps` | per-app settings (Windows): a list of `{ "app": "vlc", "sections": { ... } }`. `app` is the program's name without `.exe`; its `sections` replace those sections while that app is in front |
 
 ## Troubleshooting
 

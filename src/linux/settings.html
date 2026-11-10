@@ -65,6 +65,7 @@
       <label class="inline">Corner size <input type="range" id="cornerSize" min="8" max="30"> <span id="cornerVal" class="note"></span></label>
     </div>
     <p class="hint">On Linux, a slide starts by bringing a finger in from the laptop body onto the edge (no click). Corner presses also click normally, because Margin only listens to the touchpad. Click a section on the map to change it. Changes are saved and applied automatically.</p>
+    <p class="hint" id="apps-note" hidden>Per-app settings in this file are set up in the Windows version; on Linux the settings for all apps are used.</p>
   </section>
   <div class="cols">
     <section class="card"><svg id="pad" viewBox="0 0 160 100" role="img" aria-label="Touchpad sections"></svg></section>
@@ -245,6 +246,7 @@ function renderAll() {
   $("#speed").value = S.speed || "medium";
   $("#edgeDepth").value = Math.round(S.edgeDepth * 100); $("#edgeVal").textContent = Math.round(S.edgeDepth * 100) + "%";
   $("#cornerSize").value = Math.round(S.cornerSize * 100); $("#cornerVal").textContent = Math.round(S.cornerSize * 100) + "%";
+  $("#apps-note").hidden = !(S.apps && S.apps.length); // per-app settings are kept as they are
   renderPad(); renderEditor();
 }
 
