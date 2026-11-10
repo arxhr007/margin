@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/arxhr007/margin/main/scripts/instal
 
 It installs `~/.local/bin/margin`, does one `sudo` step for the permissions described under [Linux](#linux), and sets up a systemd user service that starts with your desktop session.
 
-**Manual download.** Every [release](../../releases) has `margin.exe` (Windows) and `margin-linux-x86_64` (Linux, static, no dependencies), each with a `.sha256` file. There is no prebuilt Linux arm64 binary yet; on arm64, build from source.
+**Manual download.** Every [release](../../releases) has `margin.exe` (Windows), `margin-linux-x86_64` and `margin-linux-aarch64` (Linux, static, no dependencies), each with a `.sha256` file. On other CPUs, build from source.
 
 **Build from source** (needs the [Rust toolchain](https://rustup.rs); on Windows also the "Desktop development with C++" build tools):
 
