@@ -185,7 +185,7 @@ pub fn freeze_pointer() -> bool {
 pub fn mouse_down() -> bool {
     with(|s| {
         s.refresh_active();
-        let swallow = s.engine.mouse_down(&s.tracker, &s.active);
+        let swallow = s.engine.mouse_down(&s.tracker, &s.active, &RealEnv);
         s.engine_done();
         swallow
     })

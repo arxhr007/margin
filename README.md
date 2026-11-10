@@ -23,7 +23,7 @@
 Most laptop touchpads only use their middle for gestures. Margin uses the unused strip around the outside:
 
 - **Slide a finger along an edge** to change volume or screen brightness, scrub a video, scroll like the old touchpad scroll strips, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed.
-- **Press a corner** once, twice or three times, or press and hold it, to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
+- **Press or tap a corner** once, twice or three times, or hold it, to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
 - **Record your own shortcuts** for each slide direction, so an edge can drive any app.
 - **Change things per app** (Windows): the bottom edge can seek in your video player and switch tabs in your browser.
 
@@ -129,18 +129,21 @@ Click an edge on the touchpad map, then choose what sliding along it controls:
 
 Slide **up or right** for "more / next" and **down or left** for "less / previous". The *Speed* setting changes how far you must slide per step. On Windows, hold **Ctrl + Shift** while sliding for fine steps (not for *Scroll*, where those keys would change what the wheel does).
 
-### Two ways to start a slide
+### Touch or click
 
-Pick one under *Start a slide by* (Windows; Linux always uses the first):
+Each edge and corner either works by touch or needs the touchpad to click. Tick or untick **Needs a click** in its editor. The **Every edge and corner needs a click** box at the top of the window changes them all at once; it shows a dash when they differ. On Linux, edges always work by touch and the box at the top is for the corners.
 
-- **Slide in from the edge** (default): bring a finger in from the laptop body onto the edge, then move along it. No click. A finger that first lands inside the touchpad, or any two-finger contact, never triggers it.
-- **Press the edge until it clicks, then slide**: rest a finger on the edge, press until the touchpad clicks, and slide without letting go. The hardest to trigger by accident.
+- **Edges by touch** (default): bring a finger in from the laptop body onto the edge, then move along it. No click. A finger that first lands inside the touchpad, or any two-finger contact, never triggers it.
+- **Edges that need a click** (Windows): rest a finger on the edge, press until the touchpad clicks, and slide without letting go. The hardest to trigger by accident.
+- **Corners that need a click** (default): press until the touchpad physically clicks. Taps are ignored.
+- **Corners by touch**: a quick tap that doesn't move away counts as a click, and resting the finger still for half a second counts as press and hold. Use this when your touchpad doesn't click everywhere: many only click near the bottom, so the top corners can't be pressed. On Windows the tap's own click is hidden from apps.
 
 On Windows, while a slide runs the pointer stays still and nothing is clicked underneath.
 
-### Corners: press them
+### Corners: press or tap them
 
-Press a corner until the touchpad physically clicks. Taps are ignored. Each corner can run a different action for **1, 2 or 3 presses**, and one more for **press and hold** (keep it pressed for half a second):
+Each corner can run a different action for **1, 2 or 3 presses** (or taps), and one more for **press and hold** (or touch and hold): keep it pressed or touched for half a second.
+
 
 Mute · Play / pause · Next / previous track · Screenshot · Task View / overview · Show desktop · Lock the PC · Notifications · **Open an app** · **Open a website** · **Press a shortcut** · **Run a command** · Nothing
 
@@ -253,7 +256,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 
 | Field | Meaning |
 | --- | --- |
-| `activation` | `slideIn` or `press` (Windows) |
+| `activation` | `slideIn` or `press`: whether edges need a click, unless a section's `needsClick` says otherwise (Windows) |
 | `speed` | `slow`, `medium` or `fast` |
 | `edgeDepth`, `cornerSize` | size of the edge strips and corner squares, as a fraction of the touchpad |
 | `entryStrip` | slide-in mode: how close to the edge a finger must first appear |
@@ -262,6 +265,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `clicks[].do` | `none`, `mute`, `playPause`, `nextTrack`, `prevTrack`, `screenshot`, `taskView`, `showDesktop`, `lock`, `notifications`, `app`, `url`, `keys`, `command` |
 | `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command` |
 | `longPress` | the action for pressing and holding the corner, with the same `do` and `value` as a click |
+| `needsClick` | in a section: `true` needs the touchpad to click, `false` works by touch (a tap for corners). Left out: edges follow `activation`, corners need a click |
 | `apps` | per-app settings (Windows): a list of `{ "app": "vlc", "sections": { ... } }`. `app` is the program's name without `.exe`; its `sections` replace those sections while that app is in front |
 
 ## Troubleshooting
@@ -272,6 +276,12 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 - Windows: check that you have a precision touchpad (*Settings → Bluetooth & devices → Touchpad* says "Your PC has a precision touchpad"). Touchpads with an older, non-precision driver don't report finger positions to Windows, so Margin can't read them.
 - Make sure Margin is on (Windows: the tray menu shows **On** ticked) and the edge or corner is assigned (assigned zones are tinted on the map).
 - Windows: tray menu → **Open log**, or run `margin.exe --diag` from a terminal. Linux: `margin --diag`, or `journalctl --user -u margin`. They show whether Margin sees your finger and what it decides.
+</details>
+
+<details>
+<summary><b>A corner (often a top one) does nothing</b></summary>
+
+Many touchpads only click near the bottom, so a top corner can't be pressed until it clicks. Select the corner and untick **Needs a click**: then a tap runs its action, and resting your finger still for half a second runs its hold action.
 </details>
 
 <details>

@@ -192,6 +192,10 @@ pub struct SectionSettings {
     /// Used by the four corners: pressing and holding the corner.
     #[serde(skip_serializing_if = "ClickSpec::is_unset")]
     pub long_press: ClickSpec,
+    /// Whether the touchpad must click to use this section, or a touch is enough. Unset: edges follow
+    /// `activation`, corners need a click. See [`Settings::needs_click`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_click: Option<bool>,
 }
 
 impl ClickSpec {
@@ -214,6 +218,7 @@ impl SectionSettings {
         back: None,
         hold_modifiers: false,
         long_press: ClickSpec::NONE,
+        needs_click: None,
     };
 
     /// A corner action by editor slot: 0-2 are 1-3 clicks, [`LONG_PRESS_SLOT`] is press and hold.
@@ -342,6 +347,45 @@ impl Settings {
     /// Mutable access, creating the section when missing.
     pub fn section_mut(&mut self, s: Section) -> &mut SectionSettings {
         self.sections.entry(s.key().to_string()).or_default()
+    }
+
+    /// Whether this section needs the touchpad to click. Edges: slide while pressing, or slide in
+    /// from the laptop body with no click. Corners: press until it clicks, or just tap.
+    pub fn needs_click(&self, s: Section) -> bool {
+        self.section(s).needs_click.unwrap_or(if s.is_corner() { true } else { self.activation == Activation::Press })
+    }
+
+    /// `Some(true)` / `Some(false)` when every section (in every app profile too) needs a click / is
+    /// used by touch, `None` when they differ.
+    pub fn all_need_click(&self) -> Option<bool> {
+        let mut values = Section::ALL.iter().map(|&s| self.needs_click(s)).chain(
+            self.apps.iter().flat_map(|p| {
+                Section::ALL
+                    .iter()
+                    .filter(|s| p.sections.contains_key(s.key()))
+                    .map(|&s| self.for_app(Some(&p.app)).needs_click(s))
+                    .collect::<Vec<_>>()
+            }),
+        );
+        let first = values.next()?;
+        values.all(|v| v == first).then_some(first)
+    }
+
+    /// Makes every section, in every app profile too, need a click or work by touch.
+    pub fn set_all_need_click(&mut self, click: bool) {
+        self.activation = if click { Activation::Press } else { Activation::SlideIn };
+        // Edges follow `activation`; corners need a click unless told otherwise.
+        let value = |s: Section| if s.is_corner() && !click { Some(false) } else { None };
+        for s in Section::ALL {
+            self.section_mut(s).needs_click = value(s);
+        }
+        for p in &mut self.apps {
+            for s in Section::ALL {
+                if let Some(v) = p.sections.get_mut(s.key()) {
+                    v.needs_click = value(s);
+                }
+            }
+        }
     }
 
     pub fn profile(&self, app: &str) -> Option<&AppProfile> {
@@ -712,6 +756,37 @@ mod tests {
         for (i, a) in ClickAction::ALL.iter().enumerate() {
             assert_eq!(*a as usize, i);
         }
+    }
+
+    #[test]
+    fn needs_click_defaults_follow_activation_for_edges_and_click_for_corners() {
+        let mut st = Settings::default(); // slideIn
+        assert!(!st.needs_click(Section::Left));
+        assert!(st.needs_click(Section::TopLeft));
+        st.activation = Activation::Press;
+        assert!(st.needs_click(Section::Left));
+        st.section_mut(Section::TopLeft).needs_click = Some(false);
+        assert!(!st.needs_click(Section::TopLeft));
+        let text = serde_json::to_string(&st).unwrap();
+        assert_eq!(text.matches("needsClick").count(), 1, "only the corner that was set");
+        assert!(!parse(&text).unwrap().needs_click(Section::TopLeft));
+    }
+
+    #[test]
+    fn set_all_need_click_reaches_every_section_and_profile() {
+        let mut st = Settings::default();
+        assert_eq!(st.all_need_click(), None, "default: edges by touch, corners by click");
+        st.apps.push(AppProfile { app: "vlc".into(), ..Default::default() });
+        st.set_override("vlc", Section::TopLeft, true);
+        st.set_all_need_click(false);
+        assert_eq!(st.all_need_click(), Some(false));
+        assert!(!st.for_app(Some("vlc")).needs_click(Section::TopLeft));
+        st.section_for_edit(Section::Top, None).needs_click = Some(true);
+        assert_eq!(st.all_need_click(), None);
+        st.set_all_need_click(true);
+        assert_eq!(st.all_need_click(), Some(true));
+        assert_eq!(st.activation, Activation::Press);
+        assert!(st.sections.values().all(|v| v.needs_click.is_none()), "nothing left to write");
     }
 
     #[test]

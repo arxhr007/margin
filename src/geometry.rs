@@ -72,7 +72,7 @@ pub fn is_assigned(s: Section, st: &Settings) -> bool {
     }
 }
 
-/// Slide-in mode: the assigned edge whose thin outer strip contains a newborn finger.
+/// Slide-in mode: the assigned edge, working by touch, whose thin outer strip contains a newborn finger.
 pub fn entry_edge(p: Pt, st: &Settings) -> Option<Section> {
     let e = st.entry_strip as f32;
     let c = st.corner_size as f32;
@@ -89,7 +89,7 @@ pub fn entry_edge(p: Pt, st: &Settings) -> Option<Section> {
     } else {
         return None;
     };
-    is_assigned(s, st).then_some(s)
+    (is_assigned(s, st) && !st.needs_click(s)).then_some(s)
 }
 
 /// How far from its edge a finger may drift before an active slide ends.
