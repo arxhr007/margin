@@ -267,6 +267,30 @@ pub struct Settings {
     /// Slide-in mode: a finger must first appear this close to the edge.
     pub entry_strip: f64,
     pub sections: IndexMap<String, SectionSettings>,
+    /// Per-app sections that replace the ones above while that app is in front (Windows).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<AppProfile>,
+}
+
+/// Sections that apply while one app is the window in front. Sections it doesn't list follow the
+/// settings for all apps.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AppProfile {
+    /// The program's name without folder or ".exe", e.g. "vlc" or "chrome".
+    pub app: String,
+    pub sections: IndexMap<String, SectionSettings>,
+}
+
+/// The name a profile is matched by: "C:\Apps\VLC.exe" and "vlc" both give "vlc".
+pub fn app_name(exe_or_path: &str) -> String {
+    let trimmed = exe_or_path.trim().trim_matches('"');
+    let file = trimmed.rsplit(['\\', '/']).next().unwrap_or(trimmed);
+    let stem = match file.rsplit_once('.') {
+        Some((stem, ext)) if ext.eq_ignore_ascii_case("exe") => stem,
+        _ => file,
+    };
+    stem.to_lowercase()
 }
 
 impl Default for Settings {
@@ -279,6 +303,7 @@ impl Default for Settings {
             corner_size: 0.15,
             entry_strip: 0.04,
             sections: defaults(),
+            apps: Vec::new(),
         }
     }
 }
@@ -317,6 +342,55 @@ impl Settings {
         self.sections.entry(s.key().to_string()).or_default()
     }
 
+    pub fn profile(&self, app: &str) -> Option<&AppProfile> {
+        let name = app_name(app);
+        self.apps.iter().find(|p| app_name(&p.app) == name)
+    }
+
+    pub fn profile_mut(&mut self, app: &str) -> Option<&mut AppProfile> {
+        let name = app_name(app);
+        self.apps.iter_mut().find(|p| app_name(&p.app) == name)
+    }
+
+    /// The settings in effect while `app` is in front: its profile's sections over the ones for all
+    /// apps. `None`, or an app without a profile, gives the settings for all apps.
+    pub fn for_app(&self, app: Option<&str>) -> Settings {
+        let mut out = Settings { apps: Vec::new(), ..self.clone() };
+        if let Some(profile) = app.and_then(|a| self.profile(a)) {
+            for (key, v) in &profile.sections {
+                out.sections.insert(key.clone(), v.clone());
+            }
+        }
+        out
+    }
+
+    /// Whether `app`'s profile has its own settings for this section.
+    pub fn overrides(&self, app: &str, s: Section) -> bool {
+        self.profile(app).is_some_and(|p| p.sections.contains_key(s.key()))
+    }
+
+    /// The section to edit: the profile's own copy when `app` has one, else the one for all apps.
+    pub fn section_for_edit(&mut self, s: Section, app: Option<&str>) -> &mut SectionSettings {
+        let name = app.map(app_name);
+        let Some(i) = name.and_then(|n| self.apps.iter().position(|p| app_name(&p.app) == n)) else {
+            return self.section_mut(s);
+        };
+        let global = self.section(s).clone();
+        self.apps[i].sections.entry(s.key().to_string()).or_insert(global)
+    }
+
+    /// Gives `app` its own copy of a section (`true`), or makes it follow all apps again (`false`).
+    pub fn set_override(&mut self, app: &str, s: Section, own: bool) {
+        let global = self.section(s).clone();
+        if let Some(p) = self.profile_mut(app) {
+            if own {
+                p.sections.entry(s.key().to_string()).or_insert(global);
+            } else {
+                p.sections.shift_remove(s.key());
+            }
+        }
+    }
+
     /// Clamps values and makes sure every section exists. Call after loading or editing raw JSON.
     pub fn normalize(&mut self) {
         self.edge_depth = self.edge_depth.clamp(0.05, 0.25);
@@ -326,6 +400,13 @@ impl Settings {
             let v = self.section_mut(s);
             v.clicks.truncate(3);
         }
+        for p in &mut self.apps {
+            for v in p.sections.values_mut() {
+                v.clicks.truncate(3);
+            }
+        }
+        // a profile without a name could never match an app
+        self.apps.retain(|p| !app_name(&p.app).is_empty());
     }
 }
 
@@ -652,6 +733,66 @@ mod tests {
         assert_eq!(v.corner_slot(LONG_PRESS_SLOT).action, ClickAction::Lock);
         let set: Vec<_> = v.corner_actions().map(|c| c.action).collect();
         assert_eq!(set, vec![ClickAction::Mute, ClickAction::Lock]);
+    }
+
+    #[test]
+    fn app_names_ignore_folder_extension_and_case() {
+        assert_eq!(app_name(r"C:\Program Files\VideoLAN\VLC\VLC.EXE"), "vlc");
+        assert_eq!(app_name("\"C:/Apps/chrome.exe\""), "chrome");
+        assert_eq!(app_name("Notepad"), "notepad");
+        assert_eq!(app_name("my.app.exe"), "my.app");
+    }
+
+    fn with_vlc_profile() -> Settings {
+        let mut st = Settings::default();
+        st.apps.push(AppProfile { app: "VLC".into(), sections: IndexMap::new() });
+        st.set_override("vlc", Section::Bottom, true);
+        st.section_for_edit(Section::Bottom, Some("vlc")).slide = SlideAction::Seek;
+        st
+    }
+
+    #[test]
+    fn a_profile_replaces_only_its_own_sections() {
+        let st = with_vlc_profile();
+        let vlc = st.for_app(Some("vlc.exe"));
+        assert_eq!(vlc.section(Section::Bottom).slide, SlideAction::Seek);
+        assert_eq!(vlc.section(Section::Left).slide, SlideAction::Volume, "not in the profile: follows all apps");
+        assert!(vlc.apps.is_empty(), "the result is flat");
+        assert_eq!(st.for_app(Some("chrome")).section(Section::Bottom).slide, SlideAction::Desktops);
+        assert_eq!(st.for_app(None).section(Section::Bottom).slide, SlideAction::Desktops);
+        assert_eq!(st.section(Section::Bottom).slide, SlideAction::Desktops, "editing the profile left all apps alone");
+    }
+
+    #[test]
+    fn editing_without_a_profile_changes_all_apps() {
+        let mut st = with_vlc_profile();
+        st.section_for_edit(Section::Left, Some("chrome")).slide = SlideAction::Zoom; // no chrome profile
+        assert_eq!(st.section(Section::Left).slide, SlideAction::Zoom);
+        st.section_for_edit(Section::Left, None).slide = SlideAction::Tracks;
+        assert_eq!(st.section(Section::Left).slide, SlideAction::Tracks);
+    }
+
+    #[test]
+    fn an_override_starts_as_a_copy_and_can_be_dropped() {
+        let mut st = with_vlc_profile();
+        assert!(!st.overrides("vlc", Section::TopLeft));
+        st.set_override("vlc", Section::TopLeft, true);
+        assert!(st.overrides("vlc", Section::TopLeft));
+        assert_eq!(st.profile("vlc").unwrap().sections["topLeft"], *st.section(Section::TopLeft));
+        st.set_override("vlc", Section::Bottom, false);
+        assert_eq!(st.for_app(Some("vlc")).section(Section::Bottom).slide, SlideAction::Desktops);
+    }
+
+    #[test]
+    fn profiles_round_trip_and_are_left_out_when_there_are_none() {
+        assert!(!serde_json::to_string(&Settings::default()).unwrap().contains("\"apps\""));
+        let st = with_vlc_profile();
+        let back = parse(&serde_json::to_string_pretty(&st).unwrap()).unwrap();
+        assert_eq!(back, st);
+        let mut nameless = st.clone();
+        nameless.apps.push(AppProfile { app: "  ".into(), sections: IndexMap::new() });
+        nameless.normalize();
+        assert_eq!(nameless.apps.len(), 1, "a profile without a name is dropped");
     }
 
     fn temp_dir(name: &str) -> PathBuf {

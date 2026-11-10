@@ -10,6 +10,7 @@ use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
+use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::engine::{Effect, Engine, Env, HOLD_MS, MULTI_CLICK_MS};
@@ -54,7 +55,14 @@ impl Env for RealEnv {
 }
 
 pub struct State {
+    /// The settings as saved: for all apps, plus the per-app profiles. The settings window edits these.
     pub settings: Settings,
+    /// What the engine uses: `settings` with the profile of the app in front applied.
+    active: Settings,
+    /// `active` needs rebuilding, as soon as no gesture is in progress.
+    active_stale: bool,
+    /// The front-app change `active` was built for (see FRONT_GEN).
+    front_seen: u64,
     pub tracker: TouchTracker,
     pub engine: Engine,
     touchpad: RawTouchpad,
@@ -67,7 +75,10 @@ pub struct State {
 impl State {
     fn new(settings: Settings) -> Self {
         State {
+            active: settings.for_app(FRONT.with(|f| f.borrow().clone()).as_deref()),
             settings,
+            active_stale: false,
+            front_seen: FRONT_GEN.with(|g| g.get()),
             tracker: TouchTracker::new(),
             engine: Engine::new(),
             touchpad: RawTouchpad::new(),
@@ -95,12 +106,44 @@ impl State {
     }
 
     fn process_raw(&mut self, lparam: LPARAM) {
-        let State { touchpad, tracker, engine, settings, frames, .. } = self;
+        self.refresh_active();
+        let State { touchpad, tracker, engine, active, frames, .. } = self;
         touchpad.process(lparam, tracker, |t| {
-            engine.on_frame(t, settings, &RealEnv);
+            engine.on_frame(t, active, &RealEnv);
             *frames += 1;
         });
         self.engine_done();
+        self.refresh_active(); // a gesture may have just ended
+    }
+
+    /// The settings or the app in front changed: rebuild `active` once no gesture is in progress.
+    /// A slide keeps the profile it started with, even when it switches apps (Alt+Tab).
+    fn refresh_active(&mut self) {
+        let front_gen = FRONT_GEN.with(|g| g.get());
+        if front_gen != self.front_seen {
+            self.active_stale = true;
+        }
+        if !self.active_stale || !self.engine.is_idle() {
+            return;
+        }
+        let front = FRONT.with(|f| f.borrow().clone());
+        if front_gen != self.front_seen {
+            self.front_seen = front_gen;
+            if let Some(app) = &front {
+                let own = self.settings.profile(app).is_some();
+                crate::debug!("front app: {app} ({})", if own { "its own settings" } else { "settings for all apps" });
+            }
+        }
+        self.active = self.settings.for_app(front.as_deref());
+        self.active_stale = false;
+    }
+
+    /// The settings were edited or reloaded: drop any gesture and use them right away.
+    fn settings_replaced(&mut self) {
+        self.engine.reset(); // also lets go of any key held for a slide
+        self.engine_done();
+        self.active_stale = true;
+        self.refresh_active();
     }
 }
 
@@ -110,6 +153,11 @@ thread_local! {
     static MAIN: Cell<isize> = const { Cell::new(0) };
     static BRIGHTNESS: RefCell<Option<brightness::Brightness>> = const { RefCell::new(None) };
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
+    /// The app in front (see `settings::app_name`), kept up to date by a WinEvent hook.
+    static FRONT: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Bumped whenever FRONT changes.
+    static FRONT_GEN: Cell<u64> = const { Cell::new(0) };
+    static FOREGROUND_HOOK: Cell<isize> = const { Cell::new(0) };
     /// The settings were edited in Margin and not written yet.
     static UNSAVED: Cell<bool> = const { Cell::new(false) };
     /// settings.json's modification time when Margin last read or wrote it.
@@ -136,7 +184,8 @@ pub fn freeze_pointer() -> bool {
 
 pub fn mouse_down() -> bool {
     with(|s| {
-        let swallow = s.engine.mouse_down(&s.tracker, &s.settings);
+        s.refresh_active();
+        let swallow = s.engine.mouse_down(&s.tracker, &s.active);
         s.engine_done();
         swallow
     })
@@ -145,8 +194,9 @@ pub fn mouse_down() -> bool {
 
 pub fn mouse_up() {
     with(|s| {
-        s.engine.mouse_up(&s.settings);
+        s.engine.mouse_up(&s.active);
         s.engine_done();
+        s.refresh_active();
     });
 }
 
@@ -175,8 +225,7 @@ pub fn read_settings<R>(f: impl FnOnce(&Settings) -> R) -> Option<R> {
 /// The settings were edited: reset any running gesture, update the tray tip, save shortly.
 pub fn settings_changed() {
     let enabled = with(|s| {
-        s.engine.reset();
-        s.engine_done();
+        s.settings_replaced();
         s.settings.enabled
     })
     .unwrap_or(true);
@@ -208,8 +257,7 @@ fn check_settings_file() {
             let enabled = new.enabled;
             with(|s| {
                 s.settings = new;
-                s.engine.reset(); // also lets go of any key held for a slide
-                s.engine_done();
+                s.settings_replaced();
             });
             tray::set_tip(main_hwnd(), if enabled { "Margin" } else { "Margin (off)" });
             ui::settings_window::reload();
@@ -279,6 +327,7 @@ fn run_effect(effect: Effect) {
 pub fn run(first_run: bool) -> i32 {
     let settings = settings::load();
     SEEN.with(|m| m.set(settings::modified_ms()));
+    set_front(unsafe { GetForegroundWindow() });
     STATE.with(|c| *c.borrow_mut() = Some(State::new(settings)));
     BRIGHTNESS.with(|b| *b.borrow_mut() = Some(brightness::Brightness::new()));
 
@@ -331,6 +380,7 @@ pub fn run(first_run: bool) -> i32 {
     }
     RawTouchpad::register(hwnd);
     hook::install();
+    watch_front_app();
     let _ = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) };
     tray::add(hwnd);
     unsafe { SetTimer(hwnd, TIMER_WATCH, WATCH_MS, None) };
@@ -368,6 +418,10 @@ fn shutdown(hwnd: HWND) {
     save_if_edited();
     flush();
     hook::uninstall();
+    let front_hook = FOREGROUND_HOOK.with(|h| h.replace(0));
+    if front_hook != 0 {
+        let _ = unsafe { UnhookWinEvent(HWINEVENTHOOK(front_hook as *mut _)) };
+    }
     tray::remove(hwnd);
     hud::destroy();
     let _ = unsafe { WTSUnRegisterSessionNotification(hwnd) };
@@ -412,14 +466,15 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         WM_TIMER => match wparam.0 {
             TIMER_CLICK => {
                 with(|s| {
-                    s.engine.click_timer_fired(&s.settings);
+                    s.engine.click_timer_fired(&s.active);
                     s.engine_done();
+                    s.refresh_active();
                 });
             }
             TIMER_HOLD => {
                 let _ = KillTimer(hwnd, TIMER_HOLD);
                 with(|s| {
-                    s.engine.hold_timer_fired(&s.settings);
+                    s.engine.hold_timer_fired(&s.active);
                     s.engine_done();
                 });
             }
@@ -469,6 +524,47 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+// ---------------------------------------------------------------- the app in front, for per-app settings
+
+/// Records which app owns `hwnd`, the new window in front.
+fn set_front(hwnd: HWND) {
+    let name = actions::process_name(hwnd);
+    let changed = FRONT.with(|f| {
+        let mut f = f.borrow_mut();
+        let changed = *f != name;
+        *f = name;
+        changed
+    });
+    if changed {
+        FRONT_GEN.with(|g| g.set(g.get() + 1));
+    }
+}
+
+/// Follows the window in front. The callback runs from the message loop, outside the mouse hook,
+/// and only records the app; `State::refresh_active` applies it when no gesture is in progress.
+fn watch_front_app() {
+    let hook = unsafe {
+        SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(on_foreground),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS, // Margin's own settings window doesn't count
+        )
+    };
+    if hook.is_invalid() {
+        crate::log::error("could not follow the window in front; per-app settings won't apply");
+    }
+    FOREGROUND_HOOK.with(|h| h.set(hook.0 as isize));
+}
+
+unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _event: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
+    set_front(hwnd);
+    with(|s| s.refresh_active());
 }
 
 static MAIN_RAW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);

@@ -3,7 +3,7 @@
 use std::os::windows::process::CommandExt;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
+use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
 use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::{
@@ -85,31 +85,31 @@ fn toggle_app(value: Option<&str>) {
         .map(|s| s.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
-    unsafe {
-        let front = GetForegroundWindow();
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(front, Some(&mut pid));
-        if pid != 0 {
-            if let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
-                let mut buf = [0u16; MAX_PATH as usize * 2];
-                let mut len = buf.len() as u32;
-                let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
-                let _ = CloseHandle(process);
-                if ok {
-                    let path = String::from_utf16_lossy(&buf[..len as usize]);
-                    let running = std::path::Path::new(&path)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_lowercase())
-                        .unwrap_or_default();
-                    if running == want {
-                        let _ = ShowWindow(front, SW_MINIMIZE);
-                        return;
-                    }
-                }
-            }
+    let front = unsafe { GetForegroundWindow() };
+    if process_name(front).is_some_and(|running| running == want) {
+        unsafe {
+            let _ = ShowWindow(front, SW_MINIMIZE);
         }
+        return;
     }
     shell_open(&exe);
+}
+
+/// The program that owns a window, by name (see [`crate::settings::app_name`]): "vlc", "chrome".
+pub fn process_name(hwnd: HWND) -> Option<String> {
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; MAX_PATH as usize * 2];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(process);
+        ok.then(|| crate::settings::app_name(&String::from_utf16_lossy(&buf[..len as usize])))
+    }
 }
 
 fn open_url(value: Option<&str>) {
