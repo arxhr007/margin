@@ -345,7 +345,7 @@ def main():
 
         # 15. corners that work by touch: a tap runs the 1-tap action, a still touch the hold action
         def touch(s):
-            s["sections"]["topLeft"]["needsClick"] = False
+            s["sections"]["topLeft"] = {"clicks": [{"do": "showDesktop"}, {"do": "playPause"}], "needsClick": False}
             s["sections"]["bottomLeft"] = {"clicks": [{"do": "nextTrack"}], "longPress": {"do": "mute"}, "needsClick": False}
         write_settings(touch)
         pad.down(0.03, 0.97)
@@ -353,6 +353,13 @@ def main():
         pad.up()
         e = drain(fd, 0.8)
         check("tap on a touch corner -> its action (Super+D)", e == [("META", 1), ("D", 1), ("D", 0), ("META", 0)], e)
+        for _ in range(2):
+            pad.down(0.03, 0.97)
+            time.sleep(0.12)
+            pad.up()
+            time.sleep(0.15)
+        e = drain(fd, 0.8)
+        check("two slow taps on a touch corner -> its 2-tap action", e == [("PLAYPAUSE", 1), ("PLAYPAUSE", 0)], e)
         pad.down(0.03, 0.03)
         time.sleep(0.8)
         mid = drain(fd, 0.2)

@@ -110,7 +110,7 @@ pub struct Engine {
     click_corner: Option<Section>,
     click_count: u32,
     touch: Option<CornerTouch>,
-    /// The finger last checked for starting a corner touch, so each finger is judged once.
+    /// The finger last checked for starting a corner touch, so each finger is judged once while it's down.
     touch_judged: Option<i32>,
     /// Corner taps whose tap-to-click hasn't arrived yet, and until when it may arrive.
     taps_to_swallow: u32,
@@ -151,6 +151,7 @@ impl Engine {
             self.multi_finger_seen = false;
             self.ignored.clear();
             self.candidate = None;
+            self.touch_judged = None; // touchpads reuse contact ids, so the next finger may have the same one
         } else if fingers.len() > 1 {
             self.multi_finger_seen = true;
             self.candidate = None;
@@ -178,6 +179,7 @@ impl Engine {
             if fingers.len() > 1 || self.multi_finger_seen || left {
                 self.touch = None;
                 self.disarm_hold();
+                self.finish_clicks(st); // taps waiting for this one are final now
                 return;
             }
             if !lifted {
@@ -190,6 +192,8 @@ impl Engine {
                 self.taps_to_swallow += 1;
                 self.swallow_until = now + TAP_CLICK_MS;
                 self.count_click(t.corner, st);
+            } else {
+                self.finish_clicks(st);
             }
             return;
         }
@@ -207,6 +211,10 @@ impl Engine {
             return;
         }
         self.touch = Some(CornerTouch { corner, finger_id: f.id, born_at: now, held: false });
+        if self.click_corner == Some(corner) {
+            // the next tap of a multi-tap: wait for it to lift instead of timing out meanwhile
+            self.effects.push(Effect::StopClickTimer);
+        }
         if !st.section(corner).long_press.is_unset() && self.click_corner != Some(corner) {
             self.hold_armed = true;
             self.effects.push(Effect::StartHoldTimer);
@@ -1051,14 +1059,18 @@ mod tests {
         let s = r.st.section_mut(Section::TopLeft);
         s.clicks.push(ClickSpec { action: ClickAction::Mute, value: None });
         s.long_press = ClickSpec { action: ClickAction::PlayPause, value: None };
-        for id in [1, 2] {
-            r.frame(&[(id, 0.05, 0.95)]);
-            r.env.advance(60);
+        let mut ran = Vec::new();
+        for tap in 0..2 {
+            r.frame(&[(1, 0.05, 0.95)]); // touchpads give each new finger the same contact id again
+            let fx = r.fx();
+            assert_eq!(tap == 1, fx.contains(&Effect::StopClickTimer), "the 2nd touch pauses the wait: {fx:?}");
+            r.env.advance(250); // slow taps: well over the 300 ms wait from lift to lift
             r.lift();
+            ran.extend(r.fx());
         }
-        assert!(r.fx().contains(&Effect::RunClick(ClickSpec { action: ClickAction::Mute, value: None })));
+        assert!(ran.contains(&Effect::RunClick(ClickSpec { action: ClickAction::Mute, value: None })), "{ran:?}");
 
-        r.frame(&[(3, 0.05, 0.95)]);
+        r.frame(&[(1, 0.05, 0.95)]);
         assert!(r.fx().contains(&Effect::StartHoldTimer));
         r.env.advance(HOLD_MS as u64);
         r.engine.hold_timer_fired(&r.st);
