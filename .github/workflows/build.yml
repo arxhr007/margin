@@ -166,3 +166,27 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Margin $TAG" --generate-notes
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Updates the winget package (winget install arxhr007.Margin) to the new release. It needs the
+  # secret WINGET_TOKEN: a classic personal access token with the public_repo scope, from an account
+  # with a fork of microsoft/winget-pkgs. Without it the step is skipped. The first version was
+  # submitted by hand; this only updates an existing package.
+  winget:
+    name: update the winget package
+    needs: [plan, release]
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: check for the winget token
+        id: token
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -n "$WINGET_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "no WINGET_TOKEN secret: skipping"; fi
+      - uses: vedantmgoyal9/winget-releaser@v2
+        if: steps.token.outputs.present == 'true'
+        with:
+          identifier: arxhr007.Margin
+          installers-regex: '^margin\.exe$'
+          release-tag: ${{ needs.plan.outputs.tag }}
+          token: ${{ secrets.WINGET_TOKEN }}
