@@ -22,7 +22,7 @@
 
 Most laptop touchpads only use their middle for gestures. Margin uses the unused strip around the outside:
 
-- **Slide a finger along an edge** to change volume or screen brightness, scrub a video, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed.
+- **Slide a finger along an edge** to change volume or screen brightness, scrub a video, scroll like the old touchpad scroll strips, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed.
 - **Press a corner** once, twice or three times, or press and hold it, to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
 - **Record your own shortcuts** for each slide direction, so an edge can drive any app.
 - **Change things per app** (Windows): the bottom edge can seek in your video player and switch tabs in your browser.
@@ -125,8 +125,9 @@ Click an edge on the touchpad map, then choose what sliding along it controls:
 | **Previous / next track** | next | previous |
 | **Switch virtual desktops** | desktop to the right | desktop to the left |
 | **Custom keys** | your shortcut | your other shortcut |
+| **Scroll** | scroll up (on the top or bottom edge: right) | scroll down (left). Smooth, like dragging a scroll bar; the window under the pointer scrolls |
 
-Slide **up or right** for "more / next" and **down or left** for "less / previous". The *Speed* setting changes how far you must slide per step. On Windows, hold **Ctrl + Shift** while sliding for fine steps.
+Slide **up or right** for "more / next" and **down or left** for "less / previous". The *Speed* setting changes how far you must slide per step. On Windows, hold **Ctrl + Shift** while sliding for fine steps (not for *Scroll*, where those keys would change what the wheel does).
 
 ### Two ways to start a slide
 
@@ -257,7 +258,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `edgeDepth`, `cornerSize` | size of the edge strips and corner squares, as a fraction of the touchpad |
 | `entryStrip` | slide-in mode: how close to the edge a finger must first appear |
 | `sections` | `left`, `right`, `top`, `bottom` (use `slide`) and `topLeft`, `topRight`, `bottomLeft`, `bottomRight` (use `clicks` and `longPress`) |
-| `slide` | `off`, `volume`, `brightness`, `seek`, `zoom`, `tabs`, `tracks`, `desktops`, `custom` |
+| `slide` | `off`, `volume`, `brightness`, `seek`, `zoom`, `tabs`, `tracks`, `desktops`, `custom`, `scroll` |
 | `clicks[].do` | `none`, `mute`, `playPause`, `nextTrack`, `prevTrack`, `screenshot`, `taskView`, `showDesktop`, `lock`, `notifications`, `app`, `url`, `keys`, `command` |
 | `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command` |
 | `longPress` | the action for pressing and holding the corner, with the same `do` and `value` as a click |
@@ -318,7 +319,7 @@ Some vendor touchpad tools (Synaptics, ELAN, Lenovo, ASUS and similar) have thei
 ## How it works
 
 - **Windows:** Raw Input for the HID digitizer usage page `0x0D` / touchpad `0x05`, parsed with `HidP_*`, so it keeps working while other windows have focus. A `WH_MOUSE_LL` hook hides edge clicks and freezes the pointer. `SendInput` sends keys. Brightness goes through WMI on a background thread. The settings window, tray icon and on-screen display are plain Win32 with per-monitor DPI awareness.
-- **Linux:** the touchpad is read from `/dev/input/event*` (evdev multitouch protocol B). Keys, media keys and the zoom wheel are sent through virtual `uinput` devices. A tiny local web server serves the settings page.
+- **Linux:** the touchpad is read from `/dev/input/event*` (evdev multitouch protocol B). Keys, media keys and the mouse wheel are sent through virtual `uinput` devices. A tiny local web server serves the settings page.
 - **Shared:** the settings, the touchpad geometry and the whole gesture engine are the same code on both systems.
 
 No network access, no telemetry. Margin only reads the touchpad and writes your settings and a small log file.

@@ -25,6 +25,8 @@ const INTENT_TRAVEL: f32 = 0.03;
 pub const MULTI_CLICK_MS: u32 = 300;
 /// How long a corner must be held down to run its long-press action.
 pub const HOLD_MS: u32 = 500;
+/// Wheel units per scroll step: a quarter notch, so scrolling moves smoothly.
+const SCROLL_UNITS: i32 = 30;
 
 /// What the engine needs from the outside world.
 pub trait Env {
@@ -39,6 +41,8 @@ pub enum Effect {
     Tap { vk: u16, times: u32 },
     Combo { vk: u16, mods: Vec<u16>, times: u32 },
     CtrlWheel(i32),
+    /// Scroll the window under the pointer by `units` (120 = one wheel notch). Positive = up / right.
+    Wheel { units: i32, horizontal: bool },
     /// Press (`up: false`) or release a key and leave it that way.
     Hold { vk: u16, up: bool },
     BrightnessRefresh,
@@ -241,6 +245,10 @@ impl Engine {
                     format!("\u{23EA}  \u{2212}{}s", -total * 5)
                 };
                 self.effects.push(Effect::HudText(label));
+            }
+            SlideAction::Scroll => {
+                // Fine mode doesn't apply: Ctrl+Shift held would turn the wheel into zoom or sideways scrolling.
+                self.effects.push(Effect::Wheel { units: delta * SCROLL_UNITS, horizontal: !section.is_vertical() });
             }
             SlideAction::Zoom => {
                 self.effects.push(Effect::CtrlWheel(if forward { n as i32 } else { -(n as i32) }));
@@ -458,6 +466,9 @@ fn step_size(a: SlideAction, st: &Settings) -> f32 {
     // Discrete actions (tabs, tracks, desktops, custom keys) get bigger steps so one swipe doesn't overshoot.
     if matches!(a, SlideAction::Tabs | SlideAction::Tracks | SlideAction::Desktops | SlideAction::Custom) {
         base * 2.5
+    } else if a == SlideAction::Scroll {
+        // Quarter-notch steps, four times as often: the same speed as one notch per step, but smooth.
+        base / 4.0
     } else {
         base
     }
@@ -681,6 +692,27 @@ mod tests {
         let fx = r.fx();
         assert!(matches!(fx[0], Effect::Tap { vk: keys::LEFT, .. }));
         assert!(matches!(&fx[1], Effect::HudText(t) if t.contains('\u{2212}')));
+    }
+
+    #[test]
+    fn scroll_sends_quarter_notches_up_and_down() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
+        slide_right_edge(&mut r, 0.63); // 0.09 up at 0.0105 per step = 8 steps
+        assert_eq!(r.fx(), vec![Effect::Wheel { units: 240, horizontal: false }]);
+        r.frame(&[(1, 0.99, 0.50)]); // back down past the start
+        assert!(matches!(r.fx()[..], [Effect::Wheel { units, horizontal: false }] if units < 0));
+    }
+
+    #[test]
+    fn scroll_on_a_horizontal_edge_scrolls_sideways_and_ignores_fine() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::Bottom).slide = SlideAction::Scroll;
+        r.env.fine.set(true);
+        r.frame(&[(1, 0.50, 0.01)]);
+        r.frame(&[(1, 0.54, 0.01)]);
+        r.frame(&[(1, 0.63, 0.01)]);
+        assert_eq!(r.fx(), vec![Effect::Wheel { units: 240, horizontal: true }]);
     }
 
     #[test]

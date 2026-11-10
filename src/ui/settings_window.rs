@@ -707,7 +707,13 @@ fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
         c.register(button, false);
     }
 
-    let direction = if section.is_vertical() {
+    let direction = if v.slide == SlideAction::Scroll {
+        if section.is_vertical() {
+            "Slide up to scroll up, down to scroll down, like dragging a scroll bar. The window under the pointer scrolls."
+        } else {
+            "Slide right to scroll right, left to scroll left. The window under the pointer scrolls."
+        }
+    } else if section.is_vertical() {
         "Slide up for more / next, down for less / previous."
     } else {
         "Slide right for forward / next, left for back / previous."

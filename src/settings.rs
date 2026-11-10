@@ -86,10 +86,11 @@ pub enum SlideAction {
     Tracks,
     Desktops,
     Custom,
+    Scroll,
 }
 
 impl SlideAction {
-    pub const ALL: [SlideAction; 9] = [
+    pub const ALL: [SlideAction; 10] = [
         SlideAction::Off,
         SlideAction::Volume,
         SlideAction::Brightness,
@@ -99,6 +100,7 @@ impl SlideAction {
         SlideAction::Tracks,
         SlideAction::Desktops,
         SlideAction::Custom,
+        SlideAction::Scroll,
     ];
 }
 
@@ -669,11 +671,12 @@ mod tests {
             // speed up
             "speed": "slow", /* inline */
             "entryStrip": 0.02,
-            "sections": { "top": { "slide": "zoom", }, },
+            "sections": { "top": { "slide": "zoom", }, "right": { "slide": "scroll" } },
         }"#;
         let s = parse(text).unwrap();
         assert_eq!(s.speed, Speed::Slow);
         assert_eq!(s.section(Section::Top).slide, SlideAction::Zoom);
+        assert_eq!(s.section(Section::Right).slide, SlideAction::Scroll);
     }
 
     #[test]

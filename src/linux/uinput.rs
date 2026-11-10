@@ -22,7 +22,7 @@ impl VirtualDevice {
         Self::create(
             "Margin virtual mouse",
             &[BTN_LEFT, BTN_RIGHT, BTN_MIDDLE],
-            &[REL_X, REL_Y, REL_WHEEL, REL_WHEEL_HI_RES],
+            &[REL_X, REL_Y, REL_WHEEL, REL_WHEEL_HI_RES, REL_HWHEEL, REL_HWHEEL_HI_RES],
         )
     }
 

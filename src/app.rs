@@ -289,6 +289,7 @@ fn run_effect(effect: Effect) {
         Effect::Tap { vk, times } => keys::tap(vk, times),
         Effect::Combo { vk, mods, times } => keys::combo(vk, &mods, times),
         Effect::CtrlWheel(n) => keys::ctrl_wheel(n),
+        Effect::Wheel { units, horizontal } => keys::wheel(units, horizontal),
         Effect::Hold { vk, up } => keys::hold(vk, up),
         Effect::BrightnessRefresh => BRIGHTNESS.with(|b| {
             if let Some(b) = b.borrow().as_ref() {
