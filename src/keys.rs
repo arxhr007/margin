@@ -232,9 +232,56 @@ mod send {
 
     /// Scrolls the window under the pointer by `units` (120 = one notch); positive is up / right.
     pub fn wheel(units: i32, horizontal: bool) {
-        if units != 0 {
+        if units != 0 && !post_wheel(units, horizontal) {
             send(&[wheel_input(units, horizontal)]);
         }
+    }
+
+    /// Hands the wheel message straight to the window under the pointer, the way Windows delivers a
+    /// precision touchpad's two-finger scroll to classic apps. Wheel input sent with SendInput while a
+    /// finger is on the touchpad gets held up and arrives in a rush after the finger lifts.
+    /// Returns false where only real input works: XAML / WinUI windows, and windows of apps running
+    /// as administrator (Windows refuses the message).
+    fn post_wheel(units: i32, horizontal: bool) -> bool {
+        use windows::Win32::Foundation::{LPARAM, POINT, WPARAM};
+        use windows::Win32::UI::HiDpi::PhysicalToLogicalPointForPerMonitorDPI;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetClassNameW, GetCursorPos, PostMessageW, WindowFromPoint, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
+        };
+        unsafe {
+            let mut pt = POINT::default();
+            if GetCursorPos(&mut pt).is_err() {
+                return false;
+            }
+            let hwnd = WindowFromPoint(pt);
+            if hwnd.0.is_null() {
+                return false;
+            }
+            let mut buf = [0u16; 64];
+            let len = GetClassNameW(hwnd, &mut buf).max(0) as usize;
+            let class = String::from_utf16_lossy(&buf[..len]);
+            if class.starts_with("Windows.UI.") || class.starts_with("Microsoft.UI.") || class == "ApplicationFrameWindow" {
+                return false;
+            }
+            // The point goes in the target's own coordinates, which differ for apps that aren't DPI aware.
+            let _ = PhysicalToLogicalPointForPerMonitorDPI(hwnd, &mut pt);
+            let message = if horizontal { WM_MOUSEHWHEEL } else { WM_MOUSEWHEEL };
+            let wparam = WPARAM(((units.clamp(-32768, 32767) as i16 as u16 as usize) << 16) | key_state());
+            let lparam = LPARAM((((pt.y as i16 as u16 as u32) << 16) | pt.x as i16 as u16 as u32) as i32 as isize);
+            PostMessageW(hwnd, message, wparam, lparam).is_ok()
+        }
+    }
+
+    /// The MK_* flags a wheel message carries: which mouse buttons and modifier keys are down.
+    fn key_state() -> usize {
+        let down = |vk: VIRTUAL_KEY| unsafe { (GetAsyncKeyState(vk.0 as i32) as u16 & 0x8000) != 0 };
+        let mut flags = 0;
+        for (vk, flag) in [(VK_LBUTTON, 0x01), (VK_RBUTTON, 0x02), (VK_SHIFT, 0x04), (VK_CONTROL, 0x08), (VK_MBUTTON, 0x10)] {
+            if down(vk) {
+                flags |= flag;
+            }
+        }
+        flags
     }
 
     fn wheel_input(units: i32, horizontal: bool) -> INPUT {
