@@ -25,8 +25,12 @@ const INTENT_TRAVEL: f32 = 0.03;
 pub const MULTI_CLICK_MS: u32 = 300;
 /// How long a corner must be held down to run its long-press action.
 pub const HOLD_MS: u32 = 500;
-/// Wheel units per scroll step: a quarter notch, so scrolling moves smoothly.
-const SCROLL_UNITS: i32 = 30;
+/// Scroll sends the wheel movement as soon as the finger has moved this many wheel units
+/// (120 = one notch). Small enough to look continuous, big enough that a resting finger's
+/// sensor noise doesn't make the page shiver. Edge (and Chrome) can sit still for a third of a
+/// second when a scroll starts with pieces of about 10 units, then catch up after the finger
+/// lifts; from 20 units up they follow at once.
+const SCROLL_MIN_UNITS: i32 = 20;
 
 /// What the engine needs from the outside world.
 pub trait Env {
@@ -212,6 +216,22 @@ impl Engine {
         }
 
         let travel = geometry::along(run.section, p) - run.origin;
+        if run.action == SlideAction::Scroll {
+            // Scroll follows the finger every frame instead of in steps: one notch per normal step of
+            // travel, sent in small pieces. `steps` counts the wheel units sent so far.
+            // Fine mode doesn't apply: Ctrl+Shift held would turn the wheel into zoom or sideways scrolling.
+            let target = (travel * 120.0 / step_size(run.action, st)) as i32;
+            let units = target - run.steps;
+            if units.abs() < SCROLL_MIN_UNITS {
+                return;
+            }
+            let horizontal = !run.section.is_vertical();
+            if let Some(run) = &mut self.run {
+                run.steps = target;
+            }
+            self.effects.push(Effect::Wheel { units, horizontal });
+            return;
+        }
         let target = (travel / step_size(run.action, st)) as i32; // truncates toward zero, like the C# cast
         let delta = target - run.steps;
         if delta == 0 {
@@ -246,10 +266,7 @@ impl Engine {
                 };
                 self.effects.push(Effect::HudText(label));
             }
-            SlideAction::Scroll => {
-                // Fine mode doesn't apply: Ctrl+Shift held would turn the wheel into zoom or sideways scrolling.
-                self.effects.push(Effect::Wheel { units: delta * SCROLL_UNITS, horizontal: !section.is_vertical() });
-            }
+            SlideAction::Scroll => {} // follows the finger in `follow`, not in steps
             SlideAction::Zoom => {
                 self.effects.push(Effect::CtrlWheel(if forward { n as i32 } else { -(n as i32) }));
             }
@@ -466,9 +483,6 @@ fn step_size(a: SlideAction, st: &Settings) -> f32 {
     // Discrete actions (tabs, tracks, desktops, custom keys) get bigger steps so one swipe doesn't overshoot.
     if matches!(a, SlideAction::Tabs | SlideAction::Tracks | SlideAction::Desktops | SlideAction::Custom) {
         base * 2.5
-    } else if a == SlideAction::Scroll {
-        // Quarter-notch steps, four times as often: the same speed as one notch per step, but smooth.
-        base / 4.0
     } else {
         base
     }
@@ -695,13 +709,29 @@ mod tests {
     }
 
     #[test]
-    fn scroll_sends_quarter_notches_up_and_down() {
+    fn scroll_follows_the_finger_up_and_down() {
         let mut r = Rig::new();
         r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
-        slide_right_edge(&mut r, 0.63); // 0.09 up at 0.0105 per step = 8 steps
-        assert_eq!(r.fx(), vec![Effect::Wheel { units: 240, horizontal: false }]);
+        slide_right_edge(&mut r, 0.63); // 0.09 up, 120 units per 0.042: about 257
+        assert!(matches!(r.fx()[..], [Effect::Wheel { units: 250..=260, horizontal: false }]));
+        r.frame(&[(1, 0.99, 0.635)]); // a tiny bit more: waits until it adds up to a piece
+        assert_eq!(r.fx(), vec![]);
+        r.frame(&[(1, 0.99, 0.64)]); // a little more: a small piece, not a whole step
+        assert!(matches!(r.fx()[..], [Effect::Wheel { units: 20..=40, horizontal: false }]));
         r.frame(&[(1, 0.99, 0.50)]); // back down past the start
         assert!(matches!(r.fx()[..], [Effect::Wheel { units, horizontal: false }] if units < 0));
+    }
+
+    #[test]
+    fn scroll_ignores_a_resting_fingers_jitter() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
+        slide_right_edge(&mut r, 0.63);
+        r.fx();
+        for y in [0.6305, 0.6298, 0.6302, 0.6299] {
+            r.frame(&[(1, 0.99, y)]);
+        }
+        assert_eq!(r.fx(), vec![]);
     }
 
     #[test]
@@ -712,7 +742,7 @@ mod tests {
         r.frame(&[(1, 0.50, 0.01)]);
         r.frame(&[(1, 0.54, 0.01)]);
         r.frame(&[(1, 0.63, 0.01)]);
-        assert_eq!(r.fx(), vec![Effect::Wheel { units: 240, horizontal: true }]);
+        assert!(matches!(r.fx()[..], [Effect::Wheel { units: 250..=260, horizontal: true }]));
     }
 
     #[test]
