@@ -83,6 +83,8 @@ struct Ui {
     dpi: u32,
     font: HFONT,
     bold: HFONT,
+    /// larger bold font of the on/off switch
+    big: HFONT,
     icon_big: HICON,
     icon_small: HICON,
     /// static parts of the window
@@ -187,7 +189,7 @@ pub fn reload() {
     unsafe {
         SendMessageW(activation, CB_SETCURSEL, WPARAM(if st.activation == Activation::SlideIn { 1 } else { 0 }), LPARAM(0));
         SendMessageW(speed, CB_SETCURSEL, WPARAM(st.speed as usize), LPARAM(0));
-        SendMessageW(enabled, BM_SETCHECK, WPARAM(st.enabled as usize), LPARAM(0));
+        refresh_switch_control(enabled, st.enabled);
         SendMessageW(edge_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.edge_depth, 5, 25) as isize));
         SendMessageW(corner_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.corner_size, 8, 30) as isize));
         let _ = InvalidateRect(pad, None, false);
@@ -258,13 +260,14 @@ fn create() {
         let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
         let _ = SetWindowPos(hwnd, None, (sw - ww) / 2, (sh - wh) / 2, ww, wh, SWP_NOZORDER | SWP_NOACTIVATE);
 
-        let (font, bold) = make_fonts(dpi);
+        let (font, bold, big) = make_fonts(dpi);
         UI.with(|c| {
             *c.borrow_mut() = Some(Ui {
                 hwnd,
                 dpi,
                 font,
                 bold,
+                big,
                 icon_big,
                 icon_small,
                 fixed: Vec::new(),
@@ -296,7 +299,7 @@ fn create() {
 }
 
 /// Segoe UI at the system message-box size for this DPI, plus a bold variant.
-fn make_fonts(dpi: u32) -> (HFONT, HFONT) {
+fn make_fonts(dpi: u32) -> (HFONT, HFONT, HFONT) {
     unsafe {
         let mut ncm = NONCLIENTMETRICSW { cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
         let ok = SystemParametersInfoForDpi(
@@ -317,7 +320,9 @@ fn make_fonts(dpi: u32) -> (HFONT, HFONT) {
         let normal = CreateFontIndirectW(&lf);
         lf.lfWeight = FW_BOLD.0 as i32;
         let bold = CreateFontIndirectW(&lf);
-        (normal, bold)
+        lf.lfHeight = (lf.lfHeight as f32 * 1.35).round() as i32; // the on/off switch
+        let big = CreateFontIndirectW(&lf);
+        (normal, bold, big)
     }
 }
 
@@ -351,7 +356,8 @@ fn create_controls(hwnd: HWND) {
     let st = app::read_settings(|s| s.clone()).unwrap_or_default();
     let tab = WS_TABSTOP.0;
 
-    let enabled = make_child(hwnd, w!("BUTTON"), "Margin is on", BS_AUTOCHECKBOX | tab, 0, ID_ENABLED, font);
+    // drawn as a large on/off switch (see draw_switch); the text is what screen readers announce
+    let enabled = make_child(hwnd, w!("BUTTON"), switch_text(st.enabled), BS_OWNERDRAW as u32 | tab, 0, ID_ENABLED, font);
     let activation = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_ACTIVATION, font);
     let speed = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_SPEED, font);
     let startup = make_child(hwnd, w!("BUTTON"), "Start with Windows", BS_AUTOCHECKBOX | tab, 0, ID_STARTUP, font);
@@ -372,7 +378,6 @@ fn create_controls(hwnd: HWND) {
             SendMessageW(speed, CB_ADDSTRING, WPARAM(0), LPARAM(wide(text).as_ptr() as isize));
         }
         SendMessageW(speed, CB_SETCURSEL, WPARAM(st.speed as usize), LPARAM(0));
-        SendMessageW(enabled, BM_SETCHECK, WPARAM(st.enabled as usize), LPARAM(0));
         SendMessageW(startup, BM_SETCHECK, WPARAM(startup::enabled() as usize), LPARAM(0));
     }
     LOADING.with(|l| l.set(false));
@@ -471,13 +476,16 @@ fn layout(hwnd: HWND) {
     let (cw, ch) = (client.right, client.bottom);
     let m = px(12.0, s);
 
-    // header, three rows
+    // header, three rows; the first holds the larger on/off switch
     let row_h = px(24.0, s);
-    let (r1, r2) = (m, m + row_h + px(8.0, s));
+    let switch_h = px(34.0, s);
+    let r1 = m;
+    let r2 = r1 + switch_h + px(8.0, s);
     let r3 = r2 + row_h + px(8.0, s);
-    move_to(enabled, m, r1, px(130.0, s), row_h);
-    move_to(fixed[0], m + px(150.0, s), r1 + px(4.0, s), px(100.0, s), px(20.0, s));
-    move_to(activation, m + px(255.0, s), r1, px(300.0, s), px(220.0, s));
+    let mid = (switch_h - row_h) / 2; // centres the first row's other controls on the switch
+    move_to(enabled, m - px(2.0, s), r1, px(205.0, s), switch_h);
+    move_to(fixed[0], m + px(220.0, s), r1 + mid + px(4.0, s), px(100.0, s), px(20.0, s));
+    move_to(activation, m + px(325.0, s), r1 + mid, px(300.0, s), px(220.0, s));
     move_to(fixed[1], m, r2 + px(4.0, s), px(50.0, s), px(20.0, s));
     move_to(speed, m + px(55.0, s), r2, px(100.0, s), px(160.0, s));
     move_to(startup, m + px(180.0, s), r2, px(180.0, s), row_h);
@@ -793,6 +801,86 @@ fn changed() {
     refresh_pad();
 }
 
+fn switch_text(on: bool) -> &'static str {
+    if on { "Margin is on" } else { "Margin is off" }
+}
+
+/// The on/off switch shows the setting: repaint it, and keep its text (read by screen readers) in step.
+fn refresh_switch_control(control: HWND, on: bool) {
+    unsafe {
+        let t = wide(switch_text(on));
+        let _ = SetWindowTextW(control, PCWSTR(t.as_ptr()));
+        let _ = InvalidateRect(control, None, true);
+    }
+}
+
+/// Margin was turned on or off elsewhere (the tray menu): update the switch if the window is open.
+pub fn enabled_changed() {
+    if let Some(control) = ui(|u| u.enabled) {
+        refresh_switch_control(control, app::read_settings(|s| s.enabled).unwrap_or(true));
+    }
+}
+
+/// Paints the on/off control as a large switch: a green track with the knob on the right when on,
+/// a gray one with the knob on the left when off, and bold text saying which.
+fn draw_switch(dis: &DRAWITEMSTRUCT) {
+    let on = app::read_settings(|s| s.enabled).unwrap_or(true);
+    let Some((big, dpi)) = ui(|u| (u.big, u.dpi)) else { return };
+    let s = dpi as f32 / 96.0;
+    let hdc = dis.hDC;
+    let r = dis.rcItem;
+    unsafe {
+        FillRect(hdc, &r, GetSysColorBrush(COLOR_3DFACE));
+
+        let track_h = px(22.0, s);
+        let track_w = px(42.0, s);
+        let x0 = r.left + px(4.0, s);
+        let y0 = r.top + (r.bottom - r.top - track_h) / 2;
+        let (fill, edge) = if on { (rgb(15, 123, 15), rgb(15, 123, 15)) } else { (rgb(255, 255, 255), rgb(110, 110, 115)) };
+        let brush = CreateSolidBrush(fill);
+        let pen = CreatePen(PS_SOLID, px(1.5, s).max(1), edge);
+        let (old_b, old_p) = (SelectObject(hdc, brush), SelectObject(hdc, pen));
+        let _ = RoundRect(hdc, x0, y0, x0 + track_w, y0 + track_h, track_h, track_h);
+        SelectObject(hdc, old_b);
+        SelectObject(hdc, old_p);
+        let _ = DeleteObject(brush);
+        let _ = DeleteObject(pen);
+
+        // the knob
+        let k = track_h - px(8.0, s);
+        let kx = if on { x0 + track_w - px(4.0, s) - k } else { x0 + px(4.0, s) };
+        let ky = y0 + px(4.0, s);
+        let knob = CreateSolidBrush(if on { rgb(255, 255, 255) } else { rgb(110, 110, 115) });
+        let no_pen = GetStockObject(NULL_PEN);
+        let (old_b, old_p) = (SelectObject(hdc, knob), SelectObject(hdc, no_pen));
+        let _ = Ellipse(hdc, kx, ky, kx + k + 1, ky + k + 1);
+        SelectObject(hdc, old_b);
+        SelectObject(hdc, old_p);
+        let _ = DeleteObject(knob);
+
+        // the words
+        let old_f = SelectObject(hdc, big);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, if on { rgb(15, 110, 15) } else { rgb(90, 90, 95) });
+        let mut text: Vec<u16> = switch_text(on).encode_utf16().collect();
+        let mut tr = RECT { left: x0 + track_w + px(10.0, s), top: r.top, right: r.right, bottom: r.bottom };
+        DrawTextW(hdc, &mut text, &mut tr, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+        if dis.itemState.0 & ODS_FOCUS.0 != 0 && dis.itemState.0 & ODS_NOFOCUSRECT.0 == 0 {
+            let mut measured = tr;
+            DrawTextW(hdc, &mut text, &mut measured, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_CALCRECT);
+            let h = measured.bottom - measured.top;
+            let fy = r.top + (r.bottom - r.top - h) / 2;
+            let focus = RECT { left: measured.left - px(3.0, s), top: fy - px(1.0, s), right: measured.right + px(3.0, s), bottom: fy + h + px(1.0, s) };
+            let _ = DrawFocusRect(hdc, &focus);
+        }
+        SelectObject(hdc, old_f);
+    }
+}
+
+fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
+}
+
 fn refresh_pad() {
     ui(|u| unsafe {
         let _ = InvalidateRect(u.pad, None, false);
@@ -854,10 +942,14 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
     let section = pad_view::selected();
 
     match id {
-        ID_ENABLED if code == 0 => {
-            let on = is_checked(control);
-            app::edit_settings(|s| s.enabled = on);
+        ID_ENABLED if code == BN_CLICKED => {
+            let on = app::edit_settings(|s| {
+                s.enabled = !s.enabled;
+                s.enabled
+            })
+            .unwrap_or(true);
             changed();
+            refresh_switch_control(control, on);
         }
         ID_ACTIVATION if code == CBN_SELCHANGE => {
             let slide_in = combo_index(control) == 1;
@@ -1165,6 +1257,13 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             rebuild_for_dpi(hwnd, new_dpi);
             return LRESULT(0);
         }
+        WM_DRAWITEM => {
+            let dis = &*(lparam.0 as *const DRAWITEMSTRUCT);
+            if dis.CtlID == ID_ENABLED as u32 {
+                draw_switch(dis);
+                return LRESULT(1);
+            }
+        }
         WM_PAD_CLICKED => {
             let section = Section::ALL[wparam.0.min(Section::ALL.len() - 1)];
             pad_view::select(section); // already done for a click on the map; keeps both in step otherwise
@@ -1222,6 +1321,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             if let Some(Some(u)) = UI.with(|c| c.try_borrow_mut().ok().map(|mut g| g.take())) {
                 let _ = DeleteObject(u.font);
                 let _ = DeleteObject(u.bold);
+                let _ = DeleteObject(u.big);
                 let _ = DeleteObject(u.bad_brush);
                 let _ = DestroyIcon(u.icon_big);
                 let _ = DestroyIcon(u.icon_small);
@@ -1235,11 +1335,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
 
 /// The window moved to a monitor with a different DPI: new fonts, then every control is rebuilt.
 fn rebuild_for_dpi(hwnd: HWND, dpi: u32) {
-    let (font, bold) = make_fonts(dpi);
+    let (font, bold, big) = make_fonts(dpi);
     let old = ui(|u| {
-        let old = (u.font, u.bold);
+        let old = (u.font, u.bold, u.big);
         u.font = font;
         u.bold = bold;
+        u.big = big;
         u.dpi = dpi;
         old
     });
@@ -1247,6 +1348,7 @@ fn rebuild_for_dpi(hwnd: HWND, dpi: u32) {
     let fixed: Vec<HWND> = ui(|u| {
         let mut all = std::mem::take(&mut u.fixed);
         all.extend([u.enabled, u.activation, u.speed, u.startup, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip]);
+        all.extend([u.profile, u.add_app, u.remove_app]);
         all
     })
     .unwrap_or_default();
@@ -1258,10 +1360,11 @@ fn rebuild_for_dpi(hwnd: HWND, dpi: u32) {
     create_controls(hwnd);
     layout(hwnd);
     build_detail(pad_view::selected());
-    if let Some((a, b)) = old {
+    if let Some((a, b, c)) = old {
         unsafe {
             let _ = DeleteObject(a);
             let _ = DeleteObject(b);
+            let _ = DeleteObject(c);
         }
     }
 }

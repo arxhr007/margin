@@ -450,6 +450,7 @@ pub fn quit() {
 fn toggle_enabled() {
     edit_settings(|s| s.enabled = !s.enabled);
     settings_changed();
+    ui::settings_window::enabled_changed();
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
