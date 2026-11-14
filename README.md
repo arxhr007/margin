@@ -127,6 +127,8 @@ Click an edge on the touchpad map, then choose what sliding along it controls:
 | **Custom keys** | your shortcut | your other shortcut |
 | **Scroll** | scroll up (on the top or bottom edge: right) | scroll down (left). Smooth, like dragging a scroll bar; the window under the pointer scrolls |
 
+For **Scroll**, two more boxes: **Reverse direction (natural scrolling)** makes the page follow your finger instead, and **Keep scrolling after a quick flick** (on by default) lets a fast slide carry on and slow down after you lift your finger, like on a phone. Touching the pad stops it.
+
 Slide **up or right** for "more / next" and **down or left** for "less / previous". The *Speed* setting changes how far you must slide per step. On Windows, hold **Ctrl + Shift** while sliding for fine steps (not for *Scroll*, where those keys would change what the wheel does).
 
 ### Touch or click
@@ -266,6 +268,8 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command` |
 | `longPress` | the action for pressing and holding the corner, with the same `do` and `value` as a click |
 | `needsClick` | in a section: `true` needs the touchpad to click, `false` works by touch (a tap for corners). Left out: edges follow `activation`, corners need a click |
+| `reverse` | in a Scroll edge: `true` scrolls the other way (natural scrolling). Left out: `false` |
+| `momentum` | in a Scroll edge: `false` stops scrolling as soon as the finger lifts. Left out: a quick flick keeps scrolling |
 | `apps` | per-app settings (Windows): a list of `{ "app": "vlc", "sections": { ... } }`. `app` is the program's name without `.exe`; its `sections` replace those sections while that app is in front |
 
 ## Troubleshooting

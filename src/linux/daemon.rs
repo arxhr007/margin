@@ -8,7 +8,7 @@ use super::actions;
 use super::devices::{self, Probe, Touchpad};
 use super::output::Output;
 use super::sys::Fd;
-use crate::engine::{Effect, Engine, Env, HOLD_MS, MULTI_CLICK_MS};
+use crate::engine::{Effect, Engine, Env, HOLD_MS, MOMENTUM_TICK_MS, MULTI_CLICK_MS};
 use crate::settings::{self, Activation, Section, Settings};
 use crate::touchpad::tracker::TouchTracker;
 
@@ -72,6 +72,7 @@ struct Daemon {
     prev_button: bool,
     click_deadline: Option<u64>,
     hold_deadline: Option<u64>,
+    momentum_deadline: Option<u64>,
     denied_logged: bool,
 }
 
@@ -122,6 +123,8 @@ impl Daemon {
                 Effect::StopClickTimer => self.click_deadline = None,
                 Effect::StartHoldTimer => self.hold_deadline = Some(crate::now_ms() + HOLD_MS as u64),
                 Effect::StopHoldTimer => self.hold_deadline = None,
+                Effect::StartMomentumTimer => self.momentum_deadline = Some(crate::now_ms() + MOMENTUM_TICK_MS as u64),
+                Effect::StopMomentumTimer => self.momentum_deadline = None,
             }
         }
     }
@@ -225,6 +228,7 @@ pub fn run(diag: bool) {
         prev_button: false,
         click_deadline: None,
         hold_deadline: None,
+        momentum_deadline: None,
         denied_logged: false,
     };
 
@@ -251,7 +255,7 @@ pub fn run(diag: bool) {
 
         // wait for touchpad events, but wake up for the click timers and the periodic checks
         let mut timeout = 1000i64;
-        for deadline in [d.click_deadline, d.hold_deadline].into_iter().flatten() {
+        for deadline in [d.click_deadline, d.hold_deadline, d.momentum_deadline].into_iter().flatten() {
             timeout = timeout.min(deadline as i64 - now as i64);
         }
         let mut fds: Vec<libc::pollfd> = d.pads.iter().map(|p| libc::pollfd { fd: p.fd.0, events: libc::POLLIN, revents: 0 }).collect();
@@ -297,6 +301,11 @@ pub fn run(diag: bool) {
         if d.hold_deadline.is_some_and(|dl| crate::now_ms() >= dl) {
             d.hold_deadline = None;
             d.engine.hold_timer_fired(&d.settings);
+            d.after_engine();
+        }
+        if d.momentum_deadline.is_some_and(|dl| crate::now_ms() >= dl) {
+            d.momentum_deadline = Some(crate::now_ms() + MOMENTUM_TICK_MS as u64); // StopMomentumTimer clears it
+            d.engine.momentum_tick(&LinuxEnv);
             d.after_engine();
         }
     }

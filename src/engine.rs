@@ -39,6 +39,16 @@ const TAP_CLICK_MS: u64 = 500;
 /// second when a scroll starts with pieces of about 10 units, then catch up after the finger
 /// lifts; from 20 units up they follow at once.
 const SCROLL_MIN_UNITS: i32 = 20;
+/// Momentum: how far back the finger's speed is measured when it lifts...
+const FLICK_WINDOW_MS: u64 = 80;
+/// ...the slowest lift (wheel units per ms) that still counts as a flick...
+const FLICK_MIN_SPEED: f32 = 0.6;
+/// ...how quickly it slows down (the speed halves every this many ms)...
+const MOMENTUM_HALF_LIFE_MS: f32 = 300.0;
+/// ...and the speed at which it stops.
+const MOMENTUM_STOP_SPEED: f32 = 0.05;
+/// How often the app calls `momentum_tick` while momentum runs.
+pub const MOMENTUM_TICK_MS: u32 = 16;
 
 /// What the engine needs from the outside world.
 pub trait Env {
@@ -69,6 +79,9 @@ pub enum Effect {
     /// (Re)start the long-press timer; the app calls `Engine::hold_timer_fired` when it expires.
     StartHoldTimer,
     StopHoldTimer,
+    /// Call `Engine::momentum_tick` every `MOMENTUM_TICK_MS` until `StopMomentumTimer`.
+    StartMomentumTimer,
+    StopMomentumTimer,
 }
 
 struct Run {
@@ -78,6 +91,18 @@ struct Run {
     origin: f32,
     from_press: bool,
     steps: i32,
+    /// Scroll: (time, exact wheel units so far) for the last moments, to measure a flick's speed.
+    samples: Vec<(u64, f32)>,
+}
+
+/// A flicked Scroll slide that keeps going after the finger lifted, slowing down.
+struct Momentum {
+    /// Wheel units per ms, with the direction.
+    speed: f32,
+    horizontal: bool,
+    last_ms: u64,
+    /// Units not sent yet.
+    rest: f32,
 }
 
 struct Candidate {
@@ -110,6 +135,7 @@ pub struct Engine {
     click_corner: Option<Section>,
     click_count: u32,
     touch: Option<CornerTouch>,
+    momentum: Option<Momentum>,
     /// The finger last checked for starting a corner touch, so each finger is judged once while it's down.
     touch_judged: Option<i32>,
     /// Corner taps whose tap-to-click hasn't arrived yet, and until when it may arrive.
@@ -147,6 +173,9 @@ impl Engine {
     /// Call after every complete touch frame.
     pub fn on_frame(&mut self, tracker: &TouchTracker, st: &Settings, env: &dyn Env) {
         let fingers = tracker.snapshot();
+        if !fingers.is_empty() && self.momentum.is_some() {
+            self.stop_momentum(); // touching the pad stops it, like on a phone
+        }
         if fingers.is_empty() {
             self.multi_finger_seen = false;
             self.ignored.clear();
@@ -272,6 +301,7 @@ impl Engine {
             origin: geometry::along(s, f.current),
             from_press,
             steps: 0,
+            samples: Vec::new(),
         });
         if action == SlideAction::Brightness {
             self.effects.push(Effect::BrightnessRefresh);
@@ -286,6 +316,7 @@ impl Engine {
             return;
         }
         let Some(finger) = fingers.iter().find(|x| x.id == run.finger_id) else {
+            self.flick(st, env); // the finger lifted
             self.stop();
             return;
         };
@@ -301,15 +332,19 @@ impl Engine {
             // Scroll follows the finger every frame instead of in steps: one notch per normal step of
             // travel, sent in small pieces. `steps` counts the wheel units sent so far.
             // Fine mode doesn't apply: Ctrl+Shift held would turn the wheel into zoom or sideways scrolling.
-            let target = (travel * 120.0 / step_size(run.action, st)) as i32;
+            let sign = if st.section(run.section).reverse { -1.0 } else { 1.0 };
+            let exact = sign * travel * 120.0 / step_size(run.action, st);
+            let now = env.now_ms();
+            let horizontal = !run.section.is_vertical();
+            let Some(run) = &mut self.run else { return };
+            run.samples.push((now, exact));
+            run.samples.retain(|&(t, _)| now.saturating_sub(t) <= FLICK_WINDOW_MS);
+            let target = exact as i32;
             let units = target - run.steps;
             if units.abs() < SCROLL_MIN_UNITS {
                 return;
             }
-            let horizontal = !run.section.is_vertical();
-            if let Some(run) = &mut self.run {
-                run.steps = target;
-            }
+            run.steps = target;
             self.effects.push(Effect::Wheel { units, horizontal });
             return;
         }
@@ -406,6 +441,55 @@ impl Engine {
             mods.retain(|m| !shared.contains(m));
         }
         self.effects.push(Effect::Combo { vk: key, mods, times: n });
+    }
+
+    /// The finger lifted off a Scroll slide: if it was still moving fast, keep scrolling.
+    fn flick(&mut self, st: &Settings, env: &dyn Env) {
+        let Some(run) = &self.run else { return };
+        if run.action != SlideAction::Scroll || st.section(run.section).momentum == Some(false) {
+            return;
+        }
+        let now = env.now_ms();
+        let (Some(&(t0, u0)), Some(&(t1, u1))) = (run.samples.first(), run.samples.last()) else { return };
+        // the finger must still have been moving at the end, over a long enough stretch to measure
+        if now.saturating_sub(t1) > FLICK_WINDOW_MS / 2 || t1.saturating_sub(t0) < 15 {
+            return;
+        }
+        let speed = (u1 - u0) / (t1 - t0) as f32;
+        if speed.abs() < FLICK_MIN_SPEED {
+            return;
+        }
+        crate::debug!("scroll flick: {speed:.2} units/ms");
+        self.momentum = Some(Momentum { speed, horizontal: !run.section.is_vertical(), last_ms: now, rest: 0.0 });
+        self.effects.push(Effect::StartMomentumTimer);
+    }
+
+    /// Momentum timer: scroll a little further and slow down; stops by itself.
+    pub fn momentum_tick(&mut self, env: &dyn Env) {
+        let Some(m) = &mut self.momentum else {
+            self.effects.push(Effect::StopMomentumTimer);
+            return;
+        };
+        let now = env.now_ms();
+        let dt = now.saturating_sub(m.last_ms).min(50) as f32;
+        m.last_ms = now;
+        m.speed *= 0.5f32.powf(dt / MOMENTUM_HALF_LIFE_MS);
+        m.rest += m.speed * dt;
+        if m.rest.abs() >= SCROLL_MIN_UNITS as f32 {
+            let units = m.rest as i32;
+            m.rest -= units as f32;
+            let horizontal = m.horizontal;
+            self.effects.push(Effect::Wheel { units, horizontal });
+        }
+        if self.momentum.as_ref().is_some_and(|m| m.speed.abs() < MOMENTUM_STOP_SPEED) {
+            self.stop_momentum();
+        }
+    }
+
+    fn stop_momentum(&mut self) {
+        if self.momentum.take().is_some() {
+            self.effects.push(Effect::StopMomentumTimer);
+        }
     }
 
     fn stop(&mut self) {
@@ -505,6 +589,7 @@ impl Engine {
         self.touch = None;
         self.taps_to_swallow = 0;
         self.disarm_hold();
+        self.stop_momentum();
     }
 
     fn disarm_hold(&mut self) {
@@ -837,6 +922,104 @@ mod tests {
             r.frame(&[(1, 0.99, y)]);
         }
         assert_eq!(r.fx(), vec![]);
+    }
+
+    /// Slides in on the right edge and moves up `per_frame` every 8 ms for `frames` frames.
+    fn flick_right_edge(r: &mut Rig, per_frame: f32, frames: usize) {
+        r.frame(&[(1, 0.99, 0.30)]);
+        r.env.advance(8);
+        r.frame(&[(1, 0.99, 0.34)]);
+        let mut y = 0.34;
+        for _ in 0..frames {
+            r.env.advance(8);
+            y += per_frame;
+            r.frame(&[(1, 0.99, y)]);
+        }
+    }
+
+    fn wheel_total(fx: &[Effect]) -> i32 {
+        fx.iter().map(|e| if let Effect::Wheel { units, .. } = e { *units } else { 0 }).sum()
+    }
+
+    #[test]
+    fn a_flick_keeps_scrolling_slower_and_slower_then_stops() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
+        flick_right_edge(&mut r, 0.02, 10); // fast: about 7 units per ms
+        r.fx();
+        r.env.advance(8);
+        r.lift();
+        assert!(r.fx().contains(&Effect::StartMomentumTimer));
+        let mut pieces = Vec::new();
+        let mut stopped = false;
+        for _ in 0..400 {
+            r.env.advance(MOMENTUM_TICK_MS as u64);
+            r.engine.momentum_tick(&r.env);
+            for e in r.fx() {
+                match e {
+                    Effect::Wheel { units, horizontal: false } => pieces.push(units),
+                    Effect::StopMomentumTimer => stopped = true,
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            if stopped {
+                break;
+            }
+        }
+        assert!(stopped, "momentum ends by itself");
+        assert!(pieces.len() > 10 && pieces.iter().all(|&u| u > 0), "{pieces:?}");
+        assert!(pieces[0] > *pieces.last().unwrap(), "slows down: {pieces:?}");
+    }
+
+    #[test]
+    fn a_slow_lift_a_stop_before_lifting_or_momentum_off_gives_no_momentum() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
+        flick_right_edge(&mut r, 0.001, 10); // slow
+        r.lift();
+        assert!(!r.fx().contains(&Effect::StartMomentumTimer));
+
+        flick_right_edge(&mut r, 0.02, 10); // fast, then rest still before lifting
+        r.env.advance(150);
+        r.frame(&[(1, 0.99, 0.54)]);
+        r.lift();
+        assert!(!r.fx().contains(&Effect::StartMomentumTimer));
+
+        r.st.section_mut(Section::Right).momentum = Some(false);
+        flick_right_edge(&mut r, 0.02, 10);
+        r.env.advance(8);
+        r.lift();
+        assert!(!r.fx().contains(&Effect::StartMomentumTimer));
+    }
+
+    #[test]
+    fn touching_the_pad_stops_momentum() {
+        let mut r = Rig::new();
+        r.st.section_mut(Section::Right).slide = SlideAction::Scroll;
+        flick_right_edge(&mut r, 0.02, 10);
+        r.env.advance(8);
+        r.lift();
+        r.fx();
+        r.frame(&[(2, 0.5, 0.5)]);
+        assert!(r.fx().contains(&Effect::StopMomentumTimer));
+        r.engine.momentum_tick(&r.env);
+        assert_eq!(wheel_total(&r.fx()), 0);
+    }
+
+    #[test]
+    fn reverse_scrolls_the_other_way_and_so_does_its_momentum() {
+        let mut r = Rig::new();
+        let v = r.st.section_mut(Section::Right);
+        v.slide = SlideAction::Scroll;
+        v.reverse = true;
+        flick_right_edge(&mut r, 0.02, 10); // finger moves up
+        assert!(wheel_total(&r.fx()) < 0, "up scrolls down");
+        r.env.advance(8);
+        r.lift();
+        r.fx();
+        r.env.advance(MOMENTUM_TICK_MS as u64 * 3);
+        r.engine.momentum_tick(&r.env);
+        assert!(wheel_total(&r.fx()) < 0);
     }
 
     #[test]

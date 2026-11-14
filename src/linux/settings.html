@@ -207,9 +207,15 @@ function renderEditor() {
     }
     const vertical = selected === "left" || selected === "right";
     const direction = s.slide === "scroll"
-      ? (vertical ? "Slide up to scroll up, down to scroll down, like dragging a scroll bar. The window under the pointer scrolls." : "Slide right to scroll right, left to scroll left. The window under the pointer scrolls.")
+      ? (vertical
+        ? (s.reverse ? "Slide up to scroll down, down to scroll up, like moving the page itself." : "Slide up to scroll up, down to scroll down, like dragging a scroll bar.")
+        : (s.reverse ? "Slide right to scroll left, left to scroll right." : "Slide right to scroll right, left to scroll left.")) + " The window under the pointer scrolls."
       : (vertical ? "Slide up for more / next, down for less / previous." : "Slide right for forward / next, left for back / previous.");
     h += `<p class="hint">${direction}</p>`;
+    if (s.slide === "scroll") {
+      h += `<label class="inline"><input type="checkbox" id="reverse"${s.reverse ? " checked" : ""}> Reverse direction (natural scrolling)</label><br>`;
+      h += `<label class="inline"><input type="checkbox" id="momentum"${s.momentum !== false ? " checked" : ""}> Keep scrolling after a quick flick</label>`;
+    }
   } else {
     const click = needsClick(selected);
     h += `<label class="inline"><input type="checkbox" id="needsClick"${click ? " checked" : ""}> Needs a click (untick: a tap is enough)</label>`;
@@ -308,6 +314,8 @@ $("#editor").addEventListener("change", e => {
     const [, f, b, hold] = PRESETS[+t.value];
     s.forward = f; s.back = b; s.holdModifiers = hold; changed(); renderEditor();
   } else if (t.id === "hold") { s.holdModifiers = t.checked; changed(); }
+  else if (t.id === "reverse") { if (t.checked) s.reverse = true; else delete s.reverse; changed(); renderEditor(); }
+  else if (t.id === "momentum") { if (t.checked) delete s.momentum; else s.momentum = false; changed(); }
   else if (t.id === "needsClick") {
     if (t.checked) delete s.needsClick; else s.needsClick = false;
     showAllClick(); changed(); renderEditor();

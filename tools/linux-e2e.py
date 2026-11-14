@@ -332,7 +332,9 @@ def main():
         w = drain_wheel(mouse)
         hi, lo = w.get(REL_WHEEL_HI_RES, []), w.get(REL_WHEEL, [])
         check("scroll edge, slide up -> smooth wheel up",
-              len(hi) >= 12 and all(0 < v < 120 for v in hi) and sum(lo) == sum(hi) // 120 and REL_HWHEEL_HI_RES not in w, w)
+              len(hi) >= 12 and all(v > 0 for v in hi) and sorted(hi)[len(hi) // 2] < 120
+              and sum(lo) == sum(hi) // 120 and REL_HWHEEL_HI_RES not in w, w)
+        flicked = sum(hi)
         pad.swipe(0.99, 0.75, 0.99, 0.30)
         w = drain_wheel(mouse)
         check("scroll edge, slide down -> wheel down", w.get(REL_WHEEL_HI_RES) and all(v < 0 for v in w[REL_WHEEL_HI_RES]), w)
@@ -342,6 +344,19 @@ def main():
               w.get(REL_HWHEEL_HI_RES) and all(v > 0 for v in w[REL_HWHEEL_HI_RES]) and REL_WHEEL_HI_RES not in w, w)
         e = drain(fd, 0.1)
         check("scroll sends no keys", e == [], e)
+
+        # a quick slide keeps scrolling after the finger lifts (momentum); without it, it stops at once
+        write_settings(lambda s: s["sections"]["right"].update(momentum=False))
+        drain_wheel(mouse, 0.2)
+        pad.swipe(0.99, 0.30, 0.99, 0.75)
+        plain = sum(drain_wheel(mouse).get(REL_WHEEL_HI_RES, []))
+        check("momentum: a flick scrolls further than the same slide without it", flicked > plain * 1.3 and plain > 0,
+              f"with {flicked}, without {plain}")
+        write_settings(lambda s: s["sections"]["right"].update(reverse=True))
+        drain_wheel(mouse, 0.2)
+        pad.swipe(0.99, 0.30, 0.99, 0.75)
+        w = drain_wheel(mouse)
+        check("reverse: sliding up scrolls down", w.get(REL_WHEEL_HI_RES) and all(v < 0 for v in w[REL_WHEEL_HI_RES]), w)
 
         # 15. corners that work by touch: a tap runs the 1-tap action, a still touch the hold action
         def touch(s):

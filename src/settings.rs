@@ -196,6 +196,12 @@ pub struct SectionSettings {
     /// `activation`, corners need a click. See [`Settings::needs_click`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub needs_click: Option<bool>,
+    /// Scroll: the other way round, like natural scrolling (finger up scrolls down).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+    /// Scroll: keep scrolling after a quick flick, slowing down. Unset means on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub momentum: Option<bool>,
 }
 
 impl ClickSpec {
@@ -219,6 +225,8 @@ impl SectionSettings {
         hold_modifiers: false,
         long_press: ClickSpec::NONE,
         needs_click: None,
+        reverse: false,
+        momentum: None,
     };
 
     /// A corner action by editor slot: 0-2 are 1-3 clicks, [`LONG_PRESS_SLOT`] is press and hold.
@@ -787,6 +795,19 @@ mod tests {
         assert_eq!(st.all_need_click(), Some(true));
         assert_eq!(st.activation, Activation::Press);
         assert!(st.sections.values().all(|v| v.needs_click.is_none()), "nothing left to write");
+    }
+
+    #[test]
+    fn scroll_options_are_left_out_until_changed() {
+        let mut st = Settings::default();
+        let text = serde_json::to_string(&st).unwrap();
+        assert!(!text.contains("reverse") && !text.contains("momentum"));
+        let v = st.section_mut(Section::Right);
+        v.reverse = true;
+        v.momentum = Some(false);
+        let back = parse(&serde_json::to_string(&st).unwrap()).unwrap();
+        assert!(back.section(Section::Right).reverse);
+        assert_eq!(back.section(Section::Right).momentum, Some(false));
     }
 
     #[test]
