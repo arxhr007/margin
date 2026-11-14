@@ -255,6 +255,16 @@ def main():
         e = drain(fd)
         check("settings reload: left edge now brightness", presses(e, "BRIGHTUP") >= 1 and presses(e, "VOLUP") == 0, e)
 
+        # 9b. split left edge: brightness on the top half, volume on the bottom half
+        write_settings(lambda s: s["sections"]["left"].update(secondHalf={"slide": "volume"}))
+        pad.swipe(0.01, 0.20, 0.01, 0.45)
+        e = drain(fd)
+        check("split edge, bottom half -> its own action (volume)", presses(e, "VOLUP") >= 1 and presses(e, "BRIGHTUP") == 0, e)
+        pad.swipe(0.01, 0.55, 0.01, 0.80)
+        e = drain(fd)
+        check("split edge, top half -> the edge's action (brightness)", presses(e, "BRIGHTUP") >= 1 and presses(e, "VOLUP") == 0, e)
+        write_settings(lambda s: s["sections"]["left"].pop("secondHalf"))
+
         # 10. custom keys on the right edge: Ctrl+PageDown / Ctrl+PageUp, no hold
         def custom(s):
             s["sections"]["right"].update(slide="custom", forward="Ctrl+PageDown", back="Ctrl+PageUp", holdModifiers=False)

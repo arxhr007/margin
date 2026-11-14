@@ -18,7 +18,8 @@ use crate::settings::{ClickAction, Section, Settings};
 use crate::app;
 
 pub const CLASS: windows::core::PCWSTR = w!("MarginPadView");
-/// Sent to the parent when a section is clicked: wparam = index into `Section::ALL`.
+/// Sent to the parent when a section is clicked: wparam = index into `Section::ALL`, lparam = 1 for the
+/// second half of a split edge.
 pub const WM_PAD_CLICKED: u32 = WM_APP + 10;
 
 const ACCENT: (u8, u8, u8) = (0, 103, 192);
@@ -29,7 +30,9 @@ const TIMER_REPAINT: usize = 1;
 
 thread_local! {
     static SELECTED: Cell<usize> = const { Cell::new(1) }; // Section::Right
-    static HOVER: Cell<Option<usize>> = const { Cell::new(None) };
+    /// The second half of the selected edge is chosen (only matters when it is split).
+    static SELECTED_HALF: Cell<bool> = const { Cell::new(false) };
+    static HOVER: Cell<Option<Spot>> = const { Cell::new(None) };
     static LAST_FRAME: Cell<u64> = const { Cell::new(0) };
     static TRACKING: Cell<bool> = const { Cell::new(false) };
 }
@@ -41,6 +44,22 @@ pub fn selected() -> Section {
 pub fn select(s: Section) {
     let index = Section::ALL.iter().position(|&x| x == s).unwrap_or(1);
     SELECTED.with(|c| c.set(index));
+}
+
+/// Whether the second half of the selected edge is chosen (bottom of left/right, right of top/bottom).
+pub fn selected_half() -> bool {
+    SELECTED_HALF.with(|h| h.get())
+}
+
+pub fn select_half(second: bool) {
+    SELECTED_HALF.with(|h| h.set(second));
+}
+
+/// A clickable place on the drawing: a section, and for a split edge which half.
+#[derive(Clone, Copy, PartialEq)]
+struct Spot {
+    index: usize,
+    second: bool,
 }
 
 pub fn register() {
@@ -91,7 +110,7 @@ fn to_screen(n: Rect, pad: (f32, f32, f32, f32)) -> RECT {
     }
 }
 
-fn hit_test(hwnd: HWND, x: i32, y: i32) -> Option<usize> {
+fn hit_test(hwnd: HWND, x: i32, y: i32) -> Option<Spot> {
     let mut client = RECT::default();
     unsafe {
         let _ = GetClientRect(hwnd, &mut client);
@@ -103,8 +122,11 @@ fn hit_test(hwnd: HWND, x: i32, y: i32) -> Option<usize> {
         return None;
     }
     let n = Pt::new((fx - px) / pw, 1.0 - (fy - py) / ph);
-    let section = app::read_settings(|st| geometry::hit(n, st)).flatten()?;
-    Section::ALL.iter().position(|&s| s == section)
+    let st = super::settings_window::view_settings();
+    let section = geometry::hit(n, &st)?;
+    let split = !section.is_corner() && st.section(section).second_half.is_some();
+    let index = Section::ALL.iter().position(|&s| s == section)?;
+    Some(Spot { index, second: split && geometry::in_second_half(section, n) })
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -160,11 +182,12 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
         WM_LBUTTONUP => {
             let (x, y) = ((lparam.0 & 0xFFFF) as i16 as i32, ((lparam.0 >> 16) & 0xFFFF) as i16 as i32);
-            if let Some(i) = hit_test(hwnd, x, y) {
-                SELECTED.with(|s| s.set(i));
+            if let Some(spot) = hit_test(hwnd, x, y) {
+                SELECTED.with(|s| s.set(spot.index));
+                SELECTED_HALF.with(|h| h.set(spot.second));
                 let _ = InvalidateRect(hwnd, None, false);
                 if let Ok(parent) = GetParent(hwnd) {
-                    let _ = PostMessageW(parent, WM_PAD_CLICKED, WPARAM(i), LPARAM(0));
+                    let _ = PostMessageW(parent, WM_PAD_CLICKED, WPARAM(spot.index), LPARAM(spot.second as isize));
                 }
             }
             LRESULT(0)
@@ -196,10 +219,10 @@ unsafe fn paint_buffered(hwnd: HWND, target: HDC) {
     let _ = DeleteDC(mem);
 }
 
-fn summary(s: Section, st: &Settings) -> String {
+fn summary(s: Section, st: &Settings, second: bool) -> String {
     let v = st.section(s);
     if !s.is_corner() {
-        return labels::slide_short(v.slide).to_string();
+        return labels::slide_short(v.half(second).slide).to_string();
     }
     // Corners are small: show the first action (clicks before press and hold), plus how many more are set.
     let used: Vec<ClickAction> = v.corner_actions().map(|c| c.action).collect();
@@ -263,9 +286,19 @@ unsafe fn paint(hwnd: HWND, hdc: HDC, client: RECT) {
     SetBkMode(hdc, TRANSPARENT);
 
     let st = super::settings_window::view_settings();
+    let selected_half = SELECTED_HALF.with(|h| h.get());
+    let mut pieces: Vec<(Section, Rect, bool, bool)> = Vec::new(); // section, rectangle, split, second half
     for &s in geometry::ALL.iter() {
+        if !s.is_corner() && st.section(s).second_half.is_some() {
+            pieces.push((s, geometry::half_bounds(s, &st, false), true, false));
+            pieces.push((s, geometry::half_bounds(s, &st, true), true, true));
+        } else {
+            pieces.push((s, geometry::bounds(s, &st), false, false));
+        }
+    }
+    for (s, bounds, split, second) in pieces {
         let index = Section::ALL.iter().position(|&x| x == s).unwrap_or(0);
-        let mut r = to_screen(geometry::bounds(s, &st), pad);
+        let mut r = to_screen(bounds, pad);
         let inset = (2.0 * scale).round() as i32;
         r.left += inset;
         r.top += inset;
@@ -274,9 +307,10 @@ unsafe fn paint(hwnd: HWND, hdc: HDC, client: RECT) {
         if r.right <= r.left || r.bottom <= r.top {
             continue;
         }
-        let assigned = geometry::is_assigned(s, &st);
-        let is_selected = index == selected;
-        let alpha = if is_selected { 120 } else if hover == Some(index) { 80 } else if assigned { 55 } else { 0 };
+        let assigned = if split { st.section(s).half(second).slide != crate::settings::SlideAction::Off } else { geometry::is_assigned(s, &st) };
+        let is_selected = index == selected && (!split || second == selected_half);
+        let hovered = hover == Some(Spot { index, second });
+        let alpha = if is_selected { 120 } else if hovered { 80 } else if assigned { 55 } else { 0 };
 
         let fill = if alpha > 0 { CreateSolidBrush(blend(ACCENT, alpha, PAD_FILL)) } else { HBRUSH(GetStockObject(NULL_BRUSH).0) };
         let pen = if is_selected {
@@ -298,7 +332,7 @@ unsafe fn paint(hwnd: HWND, hdc: HDC, client: RECT) {
         }
         let _ = DeleteObject(pen);
 
-        let text = summary(s, &st);
+        let text = summary(s, &st, second);
         if text.is_empty() {
             continue;
         }

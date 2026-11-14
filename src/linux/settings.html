@@ -114,7 +114,7 @@ const MODS = new Set(["ctrl", "control", "cmd", "command", "shift", "alt", "opt"
 const KEYNAMES = new Set(["-", "=", "[", "]", ";", "'", ",", ".", "/", "\\", "`", "return", "enter", "tab", "space", "backspace", "delete", "del", "insert", "escape", "esc",
   "left", "up", "right", "down", "home", "end", "pageup", "pagedown", "printscreen", "prtsc", "volumeup", "volumedown", "mute", "playpause", "nexttrack", "prevtrack"]);
 
-let S = null, selected = "right", saveTimer = null, recording = null;
+let S = null, selected = "right", half = 0, saveTimer = null, recording = null;
 const $ = (s, r = document) => r.querySelector(s);
 
 function validShortcut(text) {
@@ -153,9 +153,28 @@ function bounds(k) {
   })[k];
 }
 
-function summary(k) {
+// Split edges: the edge's own settings cover the top (left/right edges) or left (top/bottom) half,
+// `secondHalf` the other half.
+const isSplit = k => !isCorner(k) && !!section(k).secondHalf;
+const halfOf = (k, h) => (h && isSplit(k) ? section(k).secondHalf : section(k));
+const HALF_NAMES = k => (k === "left" || k === "right" ? ["Top half", "Bottom half"] : ["Left half", "Right half"]);
+function halfBounds(k, h) {
+  const b = bounds(k);
+  if (k === "left" || k === "right") return { ...b, y: h ? b.y : b.y + b.h / 2, h: b.h / 2 };
+  return { ...b, x: h ? b.x + b.w / 2 : b.x, w: b.w / 2 };
+}
+function setSplit(k, on) {
   const s = section(k);
-  if (!isCorner(k)) return (SLIDES.find(x => x[0] === s.slide) || [])[2] || "";
+  if (!on) { delete s.secondHalf; return; }
+  if (s.secondHalf) return;
+  const copy = { slide: s.slide };
+  for (const f of ["forward", "back", "holdModifiers", "reverse", "momentum"]) if (s[f] !== undefined) copy[f] = s[f];
+  s.secondHalf = copy;
+}
+
+function summary(k, h = 0) {
+  const s = section(k);
+  if (!isCorner(k)) return (SLIDES.find(x => x[0] === halfOf(k, h).slide) || [])[2] || "";
   const used = cornerActions(s);
   if (!used.length) return "";
   const short = (CLICKS.find(x => x[0] === used[0].do) || [])[2] || "";
@@ -164,23 +183,32 @@ function summary(k) {
 
 function assigned(k) {
   const s = section(k);
-  return isCorner(k) ? cornerActions(s).length > 0 : s.slide !== "off";
+  return isCorner(k) ? cornerActions(s).length > 0 : s.slide !== "off" || (!!s.secondHalf && s.secondHalf.slide !== "off");
 }
 
 function renderPad() {
   const svg = $("#pad");
   let out = `<rect x="1" y="1" width="158" height="98" rx="7" fill="var(--pad)" stroke="var(--padline)" stroke-width="1"/>`;
+  const pieces = [];
   for (const k of SECTIONS) {
-    const b = bounds(k), x = b.x * 160 + 1, y = (1 - b.y - b.h) * 100 + 1, w = b.w * 160 - 2, h = b.h * 100 - 2;
+    if (isSplit(k)) pieces.push([k, 0, halfBounds(k, 0)], [k, 1, halfBounds(k, 1)]);
+    else pieces.push([k, 0, bounds(k)]);
+  }
+  for (const [k, hf, b] of pieces) {
+    const x = b.x * 160 + 1, y = (1 - b.y - b.h) * 100 + 1, w = b.w * 160 - 2, h = b.h * 100 - 2;
     if (w <= 0 || h <= 0) continue;
-    const cls = ["zone", assigned(k) ? "assigned" : "", k === selected ? "sel" : ""].join(" ");
-    out += `<rect class="${cls}" data-k="${k}" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"><title>${NAMES[k]}</title></rect>`;
-    const text = summary(k);
+    const split = isSplit(k);
+    const sel = k === selected && (!split || hf === half);
+    const on = split ? halfOf(k, hf).slide !== "off" : assigned(k);
+    const cls = ["zone", on ? "assigned" : "", sel ? "sel" : ""].join(" ");
+    const title = split ? `${NAMES[k]}, ${HALF_NAMES(k)[hf].toLowerCase()}` : NAMES[k];
+    out += `<rect class="${cls}" data-k="${k}" data-half="${hf}" x="${x}" y="${y}" width="${w}" height="${h}" rx="3"><title>${title}</title></rect>`;
+    const text = summary(k, hf);
     if (text) {
       const cx = x + w / 2, cy = y + h / 2;
       const rot = k === "left" ? -90 : k === "right" ? 90 : 0;
       const small = isCorner(k) ? " small" : "";
-      out += `<text class="zlabel${small}${k === selected ? " sel" : ""}" transform="rotate(${rot} ${cx} ${cy})" x="${cx}" y="${cy}">${text}</text>`;
+      out += `<text class="zlabel${small}${sel ? " sel" : ""}" transform="rotate(${rot} ${cx} ${cy})" x="${cx}" y="${cy}">${text}</text>`;
     }
   }
   out += `<text class="center" x="80" y="51">Normal touchpad</text>`;
@@ -192,10 +220,14 @@ function option(list, value) {
 }
 
 function renderEditor() {
-  const s = section(selected), ed = $("#editor");
-  let h = `<h2>${NAMES[selected]}</h2>`;
+  const ed = $("#editor"), split = isSplit(selected);
+  if (!split) half = 0;
+  const s = isCorner(selected) ? section(selected) : halfOf(selected, half);
+  let h = `<h2>${NAMES[selected]}${split ? ", " + HALF_NAMES(selected)[half].toLowerCase() : ""}</h2>`;
   if (!isCorner(selected)) {
-    h += `<div class="field"><span>Sliding along this edge controls:</span><select id="slide">${option(SLIDES, s.slide)}</select></div>`;
+    h += `<label class="inline"><input type="checkbox" id="split"${split ? " checked" : ""}> Split in two halves, each with its own action</label>`;
+    if (split) h += `<div class="field" style="margin-top:8px"><select id="half">${HALF_NAMES(selected).map((n, i) => `<option value="${i}"${i === half ? " selected" : ""}>${n}</option>`).join("")}</select></div>`;
+    h += `<div class="field" style="margin-top:8px"><span>Sliding along this ${split ? "half" : "edge"} controls:</span><select id="slide">${option(SLIDES, s.slide)}</select></div>`;
     if (s.slide === "custom") {
       const vertical = selected === "left" || selected === "right";
       const [a, b] = vertical ? ["Slide up", "Slide down"] : ["Slide right", "Slide left"];
@@ -216,6 +248,7 @@ function renderEditor() {
       h += `<label class="inline"><input type="checkbox" id="reverse"${s.reverse ? " checked" : ""}> Reverse direction (natural scrolling)</label><br>`;
       h += `<label class="inline"><input type="checkbox" id="momentum"${s.momentum !== false ? " checked" : ""}> Keep scrolling after a quick flick</label>`;
     }
+    if (split) h += `<p class="hint">A slide keeps the action of the half it started in.</p>`;
   } else {
     const click = needsClick(selected);
     h += `<label class="inline"><input type="checkbox" id="needsClick"${click ? " checked" : ""}> Needs a click (untick: a tap is enough)</label>`;
@@ -239,7 +272,7 @@ function renderEditor() {
 function esc(t) { return String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
 
 function markBad(el) {
-  const isKeys = el.id === "fwd" || el.id === "back" || (el.dataset.val !== undefined && peekSlot(section(selected), +el.dataset.val).do === "keys");
+  const isKeys = el.id === "fwd" || el.id === "back" || (el.dataset.val !== undefined && isCorner(selected) && peekSlot(section(selected), +el.dataset.val).do === "keys");
   el.classList.toggle("bad", isKeys && el.value.trim() !== "" && !validShortcut(el.value));
 }
 
@@ -302,11 +335,16 @@ function showEnabled() {
 $("#speed").onchange = e => { S.speed = e.target.value; changed(); };
 $("#edgeDepth").oninput = e => { S.edgeDepth = e.target.value / 100; $("#edgeVal").textContent = e.target.value + "%"; changed(); };
 $("#cornerSize").oninput = e => { S.cornerSize = e.target.value / 100; $("#cornerVal").textContent = e.target.value + "%"; changed(); };
-$("#pad").onclick = e => { const k = e.target.closest("[data-k]")?.dataset.k; if (k) { selected = k; renderPad(); renderEditor(); } };
+$("#pad").onclick = e => {
+  const el = e.target.closest("[data-k]");
+  if (el) { selected = el.dataset.k; half = +el.dataset.half || 0; renderPad(); renderEditor(); }
+};
 
 $("#editor").addEventListener("change", e => {
-  const t = e.target, s = section(selected);
-  if (t.id === "slide") {
+  const t = e.target, s = isCorner(selected) ? section(selected) : halfOf(selected, half);
+  if (t.id === "split") { setSplit(selected, t.checked); half = 0; changed(); renderEditor(); }
+  else if (t.id === "half") { half = +t.value; renderPad(); renderEditor(); }
+  else if (t.id === "slide") {
     s.slide = t.value;
     if (t.value === "custom" && !(s.forward || "").trim() && !(s.back || "").trim()) { s.forward = "Ctrl+Tab"; s.back = "Ctrl+Shift+Tab"; s.holdModifiers = false; }
     changed(); renderEditor();
@@ -317,7 +355,8 @@ $("#editor").addEventListener("change", e => {
   else if (t.id === "reverse") { if (t.checked) s.reverse = true; else delete s.reverse; changed(); renderEditor(); }
   else if (t.id === "momentum") { if (t.checked) delete s.momentum; else s.momentum = false; changed(); }
   else if (t.id === "needsClick") {
-    if (t.checked) delete s.needsClick; else s.needsClick = false;
+    const c = section(selected);
+    if (t.checked) delete c.needsClick; else c.needsClick = false;
     showAllClick(); changed(); renderEditor();
   }
   else if (t.classList.contains("act")) {
@@ -328,7 +367,7 @@ $("#editor").addEventListener("change", e => {
   }
 });
 $("#editor").addEventListener("input", e => {
-  const t = e.target, s = section(selected);
+  const t = e.target, s = isCorner(selected) ? section(selected) : halfOf(selected, half);
   if (t.id === "fwd" || t.id === "back") { s[t.id === "fwd" ? "forward" : "back"] = t.value.trim() || undefined; markBad(t); changed(); }
   else if (t.classList.contains("val")) {
     slot(s, +t.dataset.val).value = t.value.trim() || undefined; markBad(t); changed();

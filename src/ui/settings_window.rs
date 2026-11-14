@@ -32,6 +32,7 @@ const ID_STARTUP: u16 = 103;
 const ID_PROFILE: u16 = 104;
 const ID_ADD_APP: u16 = 105;
 const ID_REMOVE_APP: u16 = 106;
+const ID_FULLSCREEN: u16 = 107;
 const ID_SLIDE: u16 = 200;
 const ID_PRESET: u16 = 201;
 const ID_FWD_BOX: u16 = 202;
@@ -44,6 +45,8 @@ const ID_OVERRIDE: u16 = 208;
 const ID_NEEDS_CLICK: u16 = 209;
 const ID_REVERSE: u16 = 210;
 const ID_MOMENTUM: u16 = 211;
+const ID_SPLIT: u16 = 212;
+const ID_HALF: u16 = 213;
 
 const TIP_ALL_APPS: &str =
     "Click a section on the touchpad to change it. Orange dots show your fingers. Hold Ctrl + Shift while sliding for fine steps.";
@@ -97,6 +100,7 @@ struct Ui {
     activation: HWND,
     speed: HWND,
     startup: HWND,
+    fullscreen: HWND,
     /// "Settings for:" list of All apps and the per-app profiles, with its Add / Remove buttons
     profile: HWND,
     add_app: HWND,
@@ -151,6 +155,17 @@ fn edit_section<R>(section: Section, f: impl FnOnce(&mut SectionSettings) -> R) 
     app::edit_settings(|s| f(s.section_for_edit(section, profile.as_deref())))
 }
 
+/// Edits the chosen half of a split edge, or the whole edge when it isn't split.
+fn edit_half<R>(section: Section, f: impl FnOnce(&mut SectionSettings) -> R) -> Option<R> {
+    let second = pad_view::selected_half();
+    edit_section(section, |v| f(v.half_mut(second)))
+}
+
+/// "Top half" / "Bottom half" of a vertical edge, "Left half" / "Right half" of the others.
+fn half_names(section: Section) -> [&'static str; 2] {
+    if section.is_vertical() { ["Top half", "Bottom half"] } else { ["Left half", "Right half"] }
+}
+
 fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     UI.with(|c| c.try_borrow_mut().ok().and_then(|mut g| g.as_mut().map(f)))
 }
@@ -181,8 +196,8 @@ pub fn show() {
 
 /// The settings were replaced from settings.json: show the new values if the window is open.
 pub fn reload() {
-    let Some((hwnd, enabled, activation, speed, edge_trk, corner_trk, pad)) =
-        ui(|u| (u.hwnd, u.enabled, u.activation, u.speed, u.edge_trk, u.corner_trk, u.pad))
+    let Some((hwnd, enabled, activation, speed, edge_trk, corner_trk, pad, fullscreen)) =
+        ui(|u| (u.hwnd, u.enabled, u.activation, u.speed, u.edge_trk, u.corner_trk, u.pad, u.fullscreen))
     else {
         return;
     };
@@ -193,6 +208,7 @@ pub fn reload() {
     unsafe {
         set_all_click_box(activation, &st);
         SendMessageW(speed, CB_SETCURSEL, WPARAM(st.speed as usize), LPARAM(0));
+        SendMessageW(fullscreen, BM_SETCHECK, WPARAM(st.off_in_fullscreen as usize), LPARAM(0));
         refresh_switch_control(enabled, st.enabled);
         SendMessageW(edge_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.edge_depth, 5, 25) as isize));
         SendMessageW(corner_trk, TBM_SETPOS, WPARAM(1), LPARAM(pct(st.corner_size, 8, 30) as isize));
@@ -279,6 +295,7 @@ fn create() {
                 activation: HWND::default(),
                 speed: HWND::default(),
                 startup: HWND::default(),
+                fullscreen: HWND::default(),
                 profile: HWND::default(),
                 add_app: HWND::default(),
                 remove_app: HWND::default(),
@@ -366,6 +383,7 @@ fn create_controls(hwnd: HWND) {
     let activation = make_child(hwnd, w!("BUTTON"), "Every edge and corner needs a click (untick: a tap is enough)", BS_3STATE | tab, 0, ID_ACTIVATION, font);
     let speed = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_SPEED, font);
     let startup = make_child(hwnd, w!("BUTTON"), "Start with Windows", BS_AUTOCHECKBOX | tab, 0, ID_STARTUP, font);
+    let fullscreen = make_child(hwnd, w!("BUTTON"), "Turn off while a full-screen app or game is in front", BS_AUTOCHECKBOX | tab, 0, ID_FULLSCREEN, font);
     let cap_speed = make_child(hwnd, w!("STATIC"), "Speed:", 0, 0, 0, font);
     let cap_profile = make_child(hwnd, w!("STATIC"), "Settings for:", 0, 0, 0, font);
     let profile = make_child(hwnd, w!("COMBOBOX"), "", CBS_DROPDOWNLIST | WS_VSCROLL.0 | tab, 0, ID_PROFILE, font);
@@ -380,6 +398,7 @@ fn create_controls(hwnd: HWND) {
         }
         SendMessageW(speed, CB_SETCURSEL, WPARAM(st.speed as usize), LPARAM(0));
         SendMessageW(startup, BM_SETCHECK, WPARAM(startup::enabled() as usize), LPARAM(0));
+        SendMessageW(fullscreen, BM_SETCHECK, WPARAM(st.off_in_fullscreen as usize), LPARAM(0));
     }
     LOADING.with(|l| l.set(false));
 
@@ -418,6 +437,7 @@ fn create_controls(hwnd: HWND) {
         u.activation = activation;
         u.speed = speed;
         u.startup = startup;
+        u.fullscreen = fullscreen;
         u.pad = pad;
         u.group = group;
         u.edge_trk = edge_trk;
@@ -464,8 +484,8 @@ fn move_to(h: HWND, x: i32, y: i32, w: i32, hgt: i32) {
 
 /// Positions every fixed control for the current client size and DPI.
 fn layout(hwnd: HWND) {
-    let Some((u_dpi, fixed, enabled, activation, speed, startup, pad, group, edge_trk, corner_trk, tip, profile, add_app, remove_app)) = ui(|u| {
-        (u.dpi, u.fixed.clone(), u.enabled, u.activation, u.speed, u.startup, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip, u.profile, u.add_app, u.remove_app)
+    let Some((u_dpi, fixed, enabled, activation, speed, startup, fullscreen, pad, group, edge_trk, corner_trk, tip, profile, add_app, remove_app)) = ui(|u| {
+        (u.dpi, u.fixed.clone(), u.enabled, u.activation, u.speed, u.startup, u.fullscreen, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip, u.profile, u.add_app, u.remove_app)
     }) else {
         return;
     };
@@ -488,7 +508,8 @@ fn layout(hwnd: HWND) {
     move_to(activation, m + px(220.0, s), r1 + mid, px(480.0, s), row_h);
     move_to(fixed[0], m, r2 + px(4.0, s), px(50.0, s), px(20.0, s));
     move_to(speed, m + px(55.0, s), r2, px(100.0, s), px(160.0, s));
-    move_to(startup, m + px(180.0, s), r2, px(180.0, s), row_h);
+    move_to(startup, m + px(180.0, s), r2, px(160.0, s), row_h);
+    move_to(fullscreen, m + px(350.0, s), r2, px(400.0, s), row_h);
     move_to(fixed[3], m, r3 + px(4.0, s), px(90.0, s), px(20.0, s));
     move_to(profile, m + px(95.0, s), r3, px(200.0, s), px(220.0, s));
     move_to(add_app, m + px(305.0, s), r3 - px(1.0, s), px(110.0, s), px(26.0, s));
@@ -649,8 +670,14 @@ fn build_detail(section: Section) {
     destroy_detail();
     let Some((parent, group, dpi, font, bold)) = ui(|u| (u.hwnd, u.group, u.dpi, u.font, u.bold)) else { return };
     let scale = dpi as f32 / 96.0;
+    let st = view_settings();
+    let title = if !section.is_corner() && st.section(section).second_half.is_some() {
+        format!("{}, {}", section.name(), half_names(section)[pad_view::selected_half() as usize].to_lowercase())
+    } else {
+        section.name().to_string()
+    };
     unsafe {
-        let t = wide(section.name());
+        let t = wide(&title);
         let _ = SetWindowTextW(group, PCWSTR(t.as_ptr()));
     }
     let mut r = RECT::default();
@@ -664,7 +691,6 @@ fn build_detail(section: Section) {
     }
     let pad = px(12.0, scale);
     let mut c = Cursor { x: r.left + pad, y: r.top + px(24.0, scale), width: r.right - 2 * pad, scale, parent, font, bold };
-    let st = view_settings();
     let profile = selected_profile();
     let own = overrides(section);
     if let Some(app) = &profile {
@@ -697,8 +723,18 @@ fn build_detail(section: Section) {
 }
 
 fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
-    let v = st.section(section).clone();
-    c.para("Sliding along this edge controls:", true, false, 4.0);
+    let whole = st.section(section);
+    let split = whole.second_half.is_some();
+    let second = split && pad_view::selected_half();
+    let v = whole.half(second).clone();
+    c.check(ID_SPLIT, "Split in two halves, each with its own action", split, 4.0);
+    if split {
+        c.combo(ID_HALF, &half_names(section), second as usize, 10.0);
+        c.para("Sliding along this half controls:", true, false, 4.0);
+    } else {
+        c.gap(6.0);
+        c.para("Sliding along this edge controls:", true, false, 4.0);
+    }
     let labels_list: Vec<&str> = SlideAction::ALL.iter().map(|&a| labels::slide_long(a)).collect();
     c.combo(ID_SLIDE, &labels_list, v.slide as usize, 12.0);
 
@@ -744,6 +780,9 @@ fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
     }
     c.check(ID_NEEDS_CLICK, "Needs a click", click, 4.0);
     c.para(how, false, true, 6.0);
+    if split {
+        c.para("A slide keeps the action of the half it started in. \"Needs a click\" counts for the whole edge.", false, true, 6.0);
+    }
 }
 
 fn build_custom_keys(c: &mut Cursor, section: Section, v: &crate::settings::SectionSettings) {
@@ -1006,13 +1045,13 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         }
         ID_REVERSE if code == 0 => {
             let on = is_checked(control);
-            edit_section(section, |v| v.reverse = on);
+            edit_half(section, |v| v.reverse = on);
             changed();
             post_rebuild(hwnd); // the direction text
         }
         ID_MOMENTUM if code == 0 => {
             let on = is_checked(control);
-            edit_section(section, |v| v.momentum = if on { None } else { Some(false) });
+            edit_half(section, |v| v.momentum = if on { None } else { Some(false) });
             changed();
         }
         ID_NEEDS_CLICK if code == 0 => {
@@ -1030,6 +1069,23 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             changed();
         }
         ID_STARTUP if code == 0 => startup::set_enabled(is_checked(control)),
+        ID_FULLSCREEN if code == 0 => {
+            let on = is_checked(control);
+            app::edit_settings(|s| s.off_in_fullscreen = on);
+            changed();
+        }
+        ID_SPLIT if code == 0 => {
+            let split = is_checked(control);
+            edit_section(section, |v| v.set_split(split));
+            pad_view::select_half(false);
+            changed();
+            post_rebuild(hwnd);
+        }
+        ID_HALF if code == CBN_SELCHANGE => {
+            pad_view::select_half(combo_index(control) == 1);
+            refresh_pad();
+            post_rebuild(hwnd);
+        }
         ID_PROFILE if code == CBN_SELCHANGE => {
             let index = combo_index(control);
             let apps: Vec<String> = app::read_settings(|s| s.apps.iter().map(|p| settings::app_name(&p.app)).collect()).unwrap_or_default();
@@ -1079,7 +1135,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         }
         ID_SLIDE if code == CBN_SELCHANGE => {
             let action = SlideAction::ALL[combo_index(control).min(SlideAction::ALL.len() - 1)];
-            edit_section(section, |v| {
+            edit_half(section, |v| {
                 v.slide = action;
                 if action == SlideAction::Custom && v.forward.as_deref().unwrap_or("").trim().is_empty() && v.back.as_deref().unwrap_or("").trim().is_empty() {
                     v.forward = Some("Ctrl+Tab".into());
@@ -1094,7 +1150,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
             let index = combo_index(control);
             if index > 0 {
                 let (_, fwd, back, hold) = KEY_PRESETS[index - 1];
-                edit_section(section, |v| {
+                edit_half(section, |v| {
                     v.forward = Some(fwd.into());
                     v.back = Some(back.into());
                     v.hold_modifiers = hold;
@@ -1106,7 +1162,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         ID_FWD_BOX | ID_BACK_BOX if code == EN_CHANGE => {
             let text = read_text(control);
             let value = (!text.is_empty()).then_some(text);
-            edit_section(section, |v| {
+            edit_half(section, |v| {
                 if id == ID_FWD_BOX {
                     v.forward = value;
                 } else {
@@ -1119,7 +1175,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         ID_FWD_REC | ID_BACK_REC if code == 0 => begin_recording(id),
         ID_CUSTOMIZE if code == 0 => {
             // start from what "Switch tabs" does today, so nothing changes until the user edits it
-            edit_section(section, |v| {
+            edit_half(section, |v| {
                 v.slide = SlideAction::Custom;
                 v.forward = Some("Alt+Tab".into());
                 v.back = Some("Alt+Shift+Tab".into());
@@ -1130,7 +1186,7 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
         }
         ID_HOLD if code == 0 => {
             let on = is_checked(control);
-            edit_section(section, |v| v.hold_modifiers = on);
+            edit_half(section, |v| v.hold_modifiers = on);
             changed();
         }
         _ if (ID_CORNER_BASE..ID_CORNER_BASE + 10 * CORNER_SLOTS as u16).contains(&id) => {
@@ -1334,6 +1390,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         WM_PAD_CLICKED => {
             let section = Section::ALL[wparam.0.min(Section::ALL.len() - 1)];
             pad_view::select(section); // already done for a click on the map; keeps both in step otherwise
+            pad_view::select_half(lparam.0 != 0);
             refresh_pad();
             build_detail(section);
             return LRESULT(0);
@@ -1414,7 +1471,7 @@ fn rebuild_for_dpi(hwnd: HWND, dpi: u32) {
     destroy_detail();
     let fixed: Vec<HWND> = ui(|u| {
         let mut all = std::mem::take(&mut u.fixed);
-        all.extend([u.enabled, u.activation, u.speed, u.startup, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip]);
+        all.extend([u.enabled, u.activation, u.speed, u.startup, u.fullscreen, u.pad, u.group, u.edge_trk, u.corner_trk, u.tip]);
         all.extend([u.profile, u.add_app, u.remove_app]);
         all
     })

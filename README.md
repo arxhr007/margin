@@ -17,15 +17,15 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/settings.png" alt="The Margin settings window: the on/off switch, a map of the touchpad with every edge and corner assigned, and the editor for the top edge" width="760">
+  <img src="docs/images/settings.png" alt="The Margin settings window: the on/off switch, a map of the touchpad with every edge and corner assigned and the left edge split into volume and brightness halves, and the editor for its bottom half" width="760">
 </p>
 
 Most laptop touchpads only use their middle for gestures. Margin uses the unused strip around the outside:
 
-- **Slide a finger along an edge** to change volume or screen brightness, scrub a video, scroll like the old touchpad scroll strips, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed.
+- **Slide a finger along an edge** to change volume or screen brightness, scrub a video, scroll like the old touchpad scroll strips, zoom, flip through windows or tabs, skip tracks, or switch virtual desktops. No function keys needed. **Split an edge in two** to put two of these on it.
 - **Press or tap a corner** once, twice or three times, or hold it, to run a different action each time: mute, screenshot, lock the PC, open an app or website, press any shortcut, or run a command.
 - **Record your own shortcuts** for each slide direction, so an edge can drive any app.
-- **Change things per app** (Windows): the bottom edge can seek in your video player and switch tabs in your browser.
+- **Change things per app** (Windows): the bottom edge can seek in your video player and switch tabs in your browser. Margin can also **turn itself off while a full-screen game or video is in front**.
 
 Everything in the middle of the touchpad stays a normal touchpad. Margin is one small native program (about 0.6 MB) that needs nothing installed, uses no network and sends no telemetry.
 
@@ -129,6 +129,8 @@ Click an edge on the touchpad map, then choose what sliding along it controls:
 
 For **Scroll**, two more boxes: **Reverse direction (natural scrolling)** makes the page follow your finger instead, and **Keep scrolling after a quick flick** (on by default) lets a fast slide carry on and slow down after you lift your finger, like on a phone. Touching the pad stops it.
 
+**Split an edge in two:** tick **Split in two halves, each with its own action** in the edge's editor, then click a half on the map (or pick it in the list under the box) and choose its action. For example volume on the top half of the left edge and brightness on the bottom half. A slide keeps the action of the half it started in, even when it moves on into the other half. *Needs a click* counts for the whole edge.
+
 Slide **up or right** for "more / next" and **down or left** for "less / previous". The *Speed* setting changes how far you must slide per step. On Windows, hold **Ctrl + Shift** while sliding for fine steps (not for *Scroll*, where those keys would change what the wheel does).
 
 ### Touch or click
@@ -152,6 +154,10 @@ Mute · Play / pause · Next / previous track · Screenshot · Task View / overv
 Defaults: top-left = show desktop, top-right = Task View (1 press) / notifications (2), bottom-left = lock, bottom-right = play/pause (1) / next (2) / previous (3). On the edges: left = volume, right = brightness, top = switch windows, bottom = switch virtual desktops.
 
 The **Edge size** and **Corner size** sliders change how big each zone is. The map always shows the real zones. On Windows, orange dots on the map show where your fingers are on the pad.
+
+### Full-screen apps and games
+
+On Windows, tick **Turn off while a full-screen app or game is in front** at the top of the settings window, and Margin steps aside whenever the window in front fills the whole screen: a game, a video in full screen, a slideshow. It comes back on by itself when you leave full screen. An ordinary maximized window doesn't count. Off by default, because many people like to change the volume or seek during a full-screen video. On Linux this setting isn't used yet.
 
 ## Custom keys
 
@@ -220,6 +226,7 @@ sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trig
 | Switch virtual desktops | Ctrl+Win+Left/Right | Ctrl+Super+Left/Right; some desktops use other keys, so use Custom keys there |
 | Settings | native window and tray icon | page in your browser, no tray icon |
 | Per-app settings | yes | not yet: the settings for all apps are used |
+| Turn off in full screen | yes | not yet |
 
 `margin settings` only listens on `127.0.0.1` and every request needs a random key that is part of the link it prints, so other programs and web pages can't change your settings (they could otherwise add a "run a command" corner). Changes you make there are applied by the running program within a second.
 
@@ -236,7 +243,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
   "cornerSize": 0.15,
   "entryStrip": 0.04,
   "sections": {
-    "left":  { "slide": "volume" },
+    "left":  { "slide": "volume", "secondHalf": { "slide": "brightness" } },
     "right": { "slide": "brightness" },
     "top": {
       "slide": "custom",
@@ -270,6 +277,8 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `needsClick` | in a section: `true` needs the touchpad to click, `false` works by touch (a tap for corners). Left out: edges follow `activation`, corners need a click |
 | `reverse` | in a Scroll edge: `true` scrolls the other way (natural scrolling). Left out: `false` |
 | `momentum` | in a Scroll edge: `false` stops scrolling as soon as the finger lifts. Left out: a quick flick keeps scrolling |
+| `secondHalf` | in an edge: splits it in two. The edge's own settings then cover its top half (left and right edges) or left half (top and bottom edges); `secondHalf` holds the other half's `slide`, `forward`, `back`, `holdModifiers`, `reverse` and `momentum`. Left out: one action for the whole edge |
+| `offInFullscreen` | `true`: Margin turns itself off while a full-screen app or game is in front (Windows). Left out: `false` |
 | `apps` | per-app settings (Windows): a list of `{ "app": "vlc", "sections": { ... } }`. `app` is the program's name without `.exe`; its `sections` replace those sections while that app is in front |
 
 ## Troubleshooting
