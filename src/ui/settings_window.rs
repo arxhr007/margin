@@ -42,6 +42,8 @@ const ID_HOLD: u16 = 206;
 const ID_CUSTOMIZE: u16 = 207;
 const ID_OVERRIDE: u16 = 208;
 const ID_NEEDS_CLICK: u16 = 209;
+const ID_REVERSE: u16 = 210;
+const ID_MOMENTUM: u16 = 211;
 
 const TIP_ALL_APPS: &str =
     "Click a section on the touchpad to change it. Orange dots show your fingers. Hold Ctrl + Shift while sliding for fine steps.";
@@ -718,10 +720,11 @@ fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
     }
 
     let direction = if v.slide == SlideAction::Scroll {
-        if section.is_vertical() {
-            "Slide up to scroll up, down to scroll down, like dragging a scroll bar. The window under the pointer scrolls."
-        } else {
-            "Slide right to scroll right, left to scroll left. The window under the pointer scrolls."
+        match (section.is_vertical(), v.reverse) {
+            (true, false) => "Slide up to scroll up, down to scroll down, like dragging a scroll bar. The window under the pointer scrolls.",
+            (true, true) => "Slide up to scroll down, down to scroll up, like moving the page itself. The window under the pointer scrolls.",
+            (false, false) => "Slide right to scroll right, left to scroll left. The window under the pointer scrolls.",
+            (false, true) => "Slide right to scroll left, left to scroll right. The window under the pointer scrolls.",
         }
     } else if section.is_vertical() {
         "Slide up for more / next, down for less / previous."
@@ -735,6 +738,10 @@ fn build_edge(c: &mut Cursor, section: Section, st: &Settings) {
         "Bring your finger in from the laptop body onto this edge, then slide along it. No click needed."
     };
     c.para(direction, false, false, 6.0);
+    if v.slide == SlideAction::Scroll {
+        c.check(ID_REVERSE, "Reverse direction (natural scrolling)", v.reverse, 4.0);
+        c.check(ID_MOMENTUM, "Keep scrolling after a quick flick", v.momentum != Some(false), 10.0);
+    }
     c.check(ID_NEEDS_CLICK, "Needs a click", click, 4.0);
     c.para(how, false, true, 6.0);
 }
@@ -996,6 +1003,17 @@ fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
                 set_all_click_box(control, &st);
             }
             build_detail(section); // the section's own box and how-to text
+        }
+        ID_REVERSE if code == 0 => {
+            let on = is_checked(control);
+            edit_section(section, |v| v.reverse = on);
+            changed();
+            post_rebuild(hwnd); // the direction text
+        }
+        ID_MOMENTUM if code == 0 => {
+            let on = is_checked(control);
+            edit_section(section, |v| v.momentum = if on { None } else { Some(false) });
+            changed();
         }
         ID_NEEDS_CLICK if code == 0 => {
             let click = is_checked(control);
