@@ -136,6 +136,9 @@ impl State {
             }
         }
         self.active = self.settings.for_app(front.as_deref());
+        if self.settings.off_in_fullscreen && FULLSCREEN.with(|f| f.get()) {
+            self.active.enabled = false; // the touchpad is all yours in a full-screen game or video
+        }
         self.active_stale = false;
     }
 
@@ -156,8 +159,10 @@ thread_local! {
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
     /// The app in front (see `settings::app_name`), kept up to date by a WinEvent hook.
     static FRONT: RefCell<Option<String>> = const { RefCell::new(None) };
-    /// Bumped whenever FRONT changes.
+    /// Bumped whenever FRONT changes, or the window in front goes full screen or back.
     static FRONT_GEN: Cell<u64> = const { Cell::new(0) };
+    /// The window in front fills its whole monitor (a game, a video, a slideshow).
+    static FULLSCREEN: Cell<bool> = const { Cell::new(false) };
     static FOREGROUND_HOOK: Cell<isize> = const { Cell::new(0) };
     /// The settings were edited in Margin and not written yet.
     static UNSAVED: Cell<bool> = const { Cell::new(false) };
@@ -231,6 +236,7 @@ pub fn settings_changed() {
     })
     .unwrap_or(true);
     tray::set_tip(main_hwnd(), if enabled { "Margin" } else { "Margin (off)" });
+    check_fullscreen(); // the setting may have just been turned on or off
     UNSAVED.with(|u| u.set(true));
     unsafe { SetTimer(main_hwnd(), TIMER_SAVE, SAVE_DELAY_MS, None) };
 }
@@ -497,7 +503,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 let _ = KillTimer(hwnd, TIMER_SAVE);
                 save_if_edited();
             }
-            TIMER_WATCH => check_settings_file(),
+            TIMER_WATCH => {
+                check_settings_file();
+                check_fullscreen(); // a window can go full screen without another one coming to the front (F11)
+            }
             _ => {}
         },
         WM_APP_TRAY => match (lparam.0 & 0xFFFF) as u32 {
@@ -579,7 +588,62 @@ fn watch_front_app() {
 
 unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _event: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
     set_front(hwnd);
+    check_fullscreen();
     with(|s| s.refresh_active());
+}
+
+/// Notes whether the window in front is full screen, when the user asked Margin to step aside then.
+fn check_fullscreen() {
+    let wanted = read_settings(|s| s.off_in_fullscreen).unwrap_or(false);
+    let now = wanted && front_is_fullscreen();
+    if FULLSCREEN.with(|f| f.replace(now)) != now {
+        let front = FRONT.with(|f| f.borrow().clone()).unwrap_or_default();
+        crate::debug!("{}", if now { format!("full screen in front ({front}): Margin steps aside") } else { "no longer full screen".into() });
+        FRONT_GEN.with(|g| g.set(g.get() + 1)); // rebuild the active settings
+        with(|s| s.refresh_active());
+    }
+}
+
+/// The window in front covers its whole monitor, taskbar included, and isn't an ordinary maximized window or the desktop.
+fn front_is_fullscreen() -> bool {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL};
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_invalid() || hwnd == GetShellWindow() || hwnd == GetDesktopWindow() {
+            return false;
+        }
+        // An ordinary maximized window (it has a title bar) can cover the screen too when the taskbar hides itself.
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        if IsZoomed(hwnd).as_bool() && style & WS_CAPTION.0 == WS_CAPTION.0 {
+            return false;
+        }
+        let mut class = [0u16; 64];
+        let n = GetClassNameW(hwnd, &mut class) as usize;
+        let class = String::from_utf16_lossy(&class[..n]);
+        // Windows' own screen-filling layers: the desktop, the Alt+Tab and Task View overlays (which Margin's
+        // own slides open), Start and search. Only File Explorer's windows of explorer.exe count.
+        const SHELL: [&str; 6] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ForegroundStaging", "Windows.UI.Core.CoreWindow"];
+        if SHELL.contains(&class.as_str())
+            || (class != "CabinetWClass" && actions::process_name(hwnd).as_deref() == Some("explorer"))
+        {
+            return false;
+        }
+        let mut r = RECT::default();
+        if GetWindowRect(hwnd, &mut r).is_err() {
+            return false;
+        }
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL);
+        if monitor.is_invalid() {
+            return false;
+        }
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return false;
+        }
+        let m = info.rcMonitor;
+        r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+    }
 }
 
 static MAIN_RAW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);

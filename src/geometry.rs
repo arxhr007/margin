@@ -2,7 +2,7 @@
 //! Corners own their squares; edges run between the corners. The settings window draws exactly
 //! these rectangles, so what you see there is what the touchpad does.
 
-use crate::settings::{Section, Settings, SlideAction};
+use crate::settings::{Section, SectionSettings, Settings, SlideAction};
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Pt {
@@ -68,7 +68,34 @@ pub fn is_assigned(s: Section, st: &Settings) -> bool {
     if s.is_corner() {
         v.corner_actions().next().is_some()
     } else {
-        v.slide != SlideAction::Off
+        v.slide != SlideAction::Off || v.second_half.as_ref().is_some_and(|h| h.slide != SlideAction::Off)
+    }
+}
+
+/// Whether a point on an edge lies in its second half: the bottom half of the left and right edges,
+/// the right half of the top and bottom edges. Only matters when the edge is split.
+pub fn in_second_half(s: Section, p: Pt) -> bool {
+    if s.is_vertical() {
+        p.y < 0.5
+    } else {
+        p.x >= 0.5
+    }
+}
+
+/// The settings that apply where a finger is on an edge: the half's, when the edge is split.
+pub fn edge_settings(s: Section, p: Pt, st: &Settings) -> &SectionSettings {
+    st.section(s).half(in_second_half(s, p))
+}
+
+/// One half of an edge's rectangle (for drawing a split edge).
+pub fn half_bounds(s: Section, st: &Settings, second: bool) -> Rect {
+    let r = bounds(s, st);
+    if s.is_vertical() {
+        let h = r.h / 2.0;
+        Rect { y: if second { r.y } else { r.y + h }, h, ..r }
+    } else {
+        let w = r.w / 2.0;
+        Rect { x: if second { r.x + w } else { r.x }, w, ..r }
     }
 }
 
@@ -89,7 +116,7 @@ pub fn entry_edge(p: Pt, st: &Settings) -> Option<Section> {
     } else {
         return None;
     };
-    (is_assigned(s, st) && !st.needs_click(s)).then_some(s)
+    (edge_settings(s, p, st).slide != SlideAction::Off && !st.needs_click(s)).then_some(s)
 }
 
 /// How far from its edge a finger may drift before an active slide ends.
@@ -148,6 +175,23 @@ mod tests {
         let mut off = Settings::default();
         off.section_mut(Section::Left).slide = SlideAction::Off;
         assert_eq!(entry_edge(Pt::new(0.01, 0.5), &off), None);
+    }
+
+    #[test]
+    fn a_split_edge_works_where_its_half_is_assigned() {
+        let mut st = Settings::default();
+        let left = st.section_mut(Section::Left);
+        left.slide = SlideAction::Off;
+        left.set_split(true);
+        left.half_mut(true).slide = SlideAction::Brightness;
+        assert!(is_assigned(Section::Left, &st), "one half is enough");
+        assert_eq!(entry_edge(Pt::new(0.01, 0.3), &st), Some(Section::Left), "bottom half: brightness");
+        assert_eq!(entry_edge(Pt::new(0.01, 0.7), &st), None, "top half: nothing");
+        assert_eq!(edge_settings(Section::Left, Pt::new(0.01, 0.3), &st).slide, SlideAction::Brightness);
+        assert!(in_second_half(Section::Top, Pt::new(0.6, 0.99)), "top edge: right half is the second");
+        let top = half_bounds(Section::Left, &st, false);
+        let bottom = half_bounds(Section::Left, &st, true);
+        assert!((top.y - 0.5).abs() < 1e-6 && (bottom.y + bottom.h - 0.5).abs() < 1e-6);
     }
 
     #[test]

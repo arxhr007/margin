@@ -86,6 +86,8 @@ pub enum Effect {
 
 struct Run {
     section: Section,
+    /// The settings of the edge, or of the half the slide started in when the edge is split.
+    cfg: SectionSettings,
     action: SlideAction,
     finger_id: i32,
     origin: f32,
@@ -292,10 +294,19 @@ impl Engine {
         }
     }
 
-    fn start(&mut self, s: Section, f: TouchPoint, from_press: bool, st: &Settings) {
-        let action = st.section(s).slide;
+    /// Starts a slide on edge `s`, with the settings of the half the finger is in. Returns false
+    /// when that half does nothing.
+    fn start(&mut self, s: Section, f: TouchPoint, from_press: bool, st: &Settings) -> bool {
+        // slide-in: the half it came in on; press: where it rests when the touchpad clicks
+        let at = if from_press { f.current } else { f.start };
+        let cfg = geometry::edge_settings(s, at, st).clone();
+        let action = cfg.slide;
+        if action == SlideAction::Off {
+            return false;
+        }
         self.run = Some(Run {
             section: s,
+            cfg,
             action,
             finger_id: f.id,
             origin: geometry::along(s, f.current),
@@ -307,6 +318,7 @@ impl Engine {
             self.effects.push(Effect::BrightnessRefresh);
         }
         crate::debug!("slide start {s:?} -> {action:?} ({})", if from_press { "press" } else { "slide-in" });
+        true
     }
 
     fn follow(&mut self, fingers: &[TouchPoint], st: &Settings, env: &dyn Env) {
@@ -316,7 +328,7 @@ impl Engine {
             return;
         }
         let Some(finger) = fingers.iter().find(|x| x.id == run.finger_id) else {
-            self.flick(st, env); // the finger lifted
+            self.flick(env); // the finger lifted
             self.stop();
             return;
         };
@@ -332,7 +344,7 @@ impl Engine {
             // Scroll follows the finger every frame instead of in steps: one notch per normal step of
             // travel, sent in small pieces. `steps` counts the wheel units sent so far.
             // Fine mode doesn't apply: Ctrl+Shift held would turn the wheel into zoom or sideways scrolling.
-            let sign = if st.section(run.section).reverse { -1.0 } else { 1.0 };
+            let sign = if run.cfg.reverse { -1.0 } else { 1.0 };
             let exact = sign * travel * 120.0 / step_size(run.action, st);
             let now = env.now_ms();
             let horizontal = !run.section.is_vertical();
@@ -353,14 +365,14 @@ impl Engine {
         if delta == 0 {
             return;
         }
-        let (section, action) = (run.section, run.action);
+        let (cfg, action) = (run.cfg.clone(), run.action);
         if let Some(run) = &mut self.run {
             run.steps = target;
         }
-        self.perform(section, action, delta, target, st, env);
+        self.perform(&cfg, action, delta, target, env);
     }
 
-    fn perform(&mut self, section: Section, action: SlideAction, delta: i32, total: i32, st: &Settings, env: &dyn Env) {
+    fn perform(&mut self, cfg: &SectionSettings, action: SlideAction, delta: i32, total: i32, env: &dyn Env) {
         let fine = env.fine_held();
         let n = delta.unsigned_abs();
         let forward = delta > 0;
@@ -399,7 +411,7 @@ impl Engine {
                     times: n,
                 });
             }
-            SlideAction::Custom => self.send_custom(st.section(section), forward, n),
+            SlideAction::Custom => self.send_custom(cfg, forward, n),
             SlideAction::Desktops => self.effects.push(Effect::Combo {
                 vk: if forward { keys::RIGHT } else { keys::LEFT },
                 mods: vec![keys::CTRL, keys::WIN],
@@ -444,9 +456,9 @@ impl Engine {
     }
 
     /// The finger lifted off a Scroll slide: if it was still moving fast, keep scrolling.
-    fn flick(&mut self, st: &Settings, env: &dyn Env) {
+    fn flick(&mut self, env: &dyn Env) {
         let Some(run) = &self.run else { return };
-        if run.action != SlideAction::Scroll || st.section(run.section).momentum == Some(false) {
+        if run.action != SlideAction::Scroll || run.cfg.momentum == Some(false) {
             return;
         }
         let now = env.now_ms();
@@ -558,10 +570,9 @@ impl Engine {
                 self.effects.push(Effect::StartHoldTimer);
             }
         } else {
-            if !st.needs_click(s) {
-                return false;
+            if !st.needs_click(s) || !self.start(s, f, true, st) {
+                return false; // works by touch, or the half under the finger does nothing
             }
-            self.start(s, f, true, st);
         }
         self.holding_click = true;
         true
@@ -1132,6 +1143,74 @@ mod tests {
         }
         slide_right_edge(&mut r, 0.70);
         assert_eq!(r.fx(), vec![Effect::HudText("Set a shortcut for this direction in Margin".into())]);
+    }
+
+    // --- split edges -----------------------------------------------------------------------
+
+    /// Left edge split: volume on the top half, brightness on the bottom half.
+    fn split_left(r: &mut Rig) {
+        let left = r.st.section_mut(Section::Left);
+        left.set_split(true);
+        left.half_mut(true).slide = SlideAction::Brightness;
+    }
+
+    #[test]
+    fn a_split_edge_runs_the_action_of_the_half_the_slide_starts_in() {
+        let mut r = Rig::new();
+        split_left(&mut r);
+        r.frame(&[(1, 0.01, 0.60)]); // top half
+        r.frame(&[(1, 0.01, 0.64)]);
+        r.frame(&[(1, 0.01, 0.73)]);
+        assert_eq!(r.fx(), vec![Effect::Tap { vk: keys::VOLUME_UP, times: 4 }]);
+        r.lift();
+        r.fx();
+        r.frame(&[(1, 0.01, 0.40)]); // bottom half
+        r.frame(&[(1, 0.01, 0.44)]);
+        assert_eq!(r.fx(), vec![Effect::BrightnessRefresh]);
+        r.frame(&[(1, 0.01, 0.62)]); // on into the top half: still brightness
+        assert_eq!(r.fx(), vec![Effect::BrightnessNudge(20)]);
+    }
+
+    #[test]
+    fn a_half_set_to_nothing_stays_normal_touchpad() {
+        let mut r = Rig::new();
+        split_left(&mut r);
+        r.st.section_mut(Section::Left).slide = SlideAction::Off; // top half: nothing
+        r.frame(&[(1, 0.01, 0.60)]);
+        r.frame(&[(1, 0.01, 0.70)]);
+        assert!(!r.engine.freeze_pointer());
+        r.lift();
+        r.st.activation = Activation::Press;
+        assert!(!press(&mut r, (0.05, 0.70)), "a click on the empty half is the app's");
+        release(&mut r);
+        assert!(press(&mut r, (0.05, 0.30)), "a click on the other half starts it");
+        assert_eq!(r.fx(), vec![Effect::BrightnessRefresh]);
+        release(&mut r);
+    }
+
+    #[test]
+    fn each_half_keeps_its_own_custom_keys_and_scroll_options() {
+        let mut r = Rig::new();
+        {
+            let top = r.st.section_mut(Section::Top);
+            top.slide = SlideAction::Scroll;
+            top.set_split(true);
+            top.reverse = true; // left half scrolls the other way
+            let right_half = top.half_mut(true);
+            right_half.slide = SlideAction::Custom;
+            right_half.forward = Some("Ctrl+Y".into());
+            right_half.back = Some("Ctrl+Z".into());
+        }
+        r.frame(&[(1, 0.30, 0.99)]); // left half
+        r.frame(&[(1, 0.34, 0.99)]);
+        r.frame(&[(1, 0.43, 0.99)]);
+        assert!(matches!(r.fx()[..], [Effect::Wheel { units, horizontal: true }] if units < 0), "reversed");
+        r.lift();
+        r.fx();
+        r.frame(&[(1, 0.60, 0.99)]); // right half
+        r.frame(&[(1, 0.64, 0.99)]);
+        r.frame(&[(1, 0.76, 0.99)]);
+        assert_eq!(r.fx(), vec![Effect::Combo { vk: keys::parse_shortcut("Ctrl+Y").unwrap().0, mods: vec![keys::CTRL], times: 1 }]);
     }
 
     // --- press mode and corners ------------------------------------------------------------

@@ -202,6 +202,10 @@ pub struct SectionSettings {
     /// Scroll: keep scrolling after a quick flick, slowing down. Unset means on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub momentum: Option<bool>,
+    /// Edges: set when the edge is split in two. The edge's own settings then cover its top half
+    /// (left and right edges) or left half (top and bottom edges), and these the other half.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub second_half: Option<Box<SectionSettings>>,
 }
 
 impl ClickSpec {
@@ -227,7 +231,44 @@ impl SectionSettings {
         needs_click: None,
         reverse: false,
         momentum: None,
+        second_half: None,
     };
+
+    /// The settings of one half of an edge: the edge's own for the first half, or the second half's
+    /// when the edge is split. An edge that isn't split uses its own settings for both.
+    pub fn half(&self, second: bool) -> &SectionSettings {
+        match (&self.second_half, second) {
+            (Some(h), true) => h,
+            _ => self,
+        }
+    }
+
+    /// The same, for editing.
+    pub fn half_mut(&mut self, second: bool) -> &mut SectionSettings {
+        if second && self.second_half.is_some() {
+            self.second_half.as_mut().expect("checked above")
+        } else {
+            self
+        }
+    }
+
+    /// Splits the edge in two (both halves start as they are now) or joins it again (the first half's
+    /// settings stay).
+    pub fn set_split(&mut self, split: bool) {
+        if !split {
+            self.second_half = None;
+        } else if self.second_half.is_none() {
+            self.second_half = Some(Box::new(SectionSettings {
+                slide: self.slide,
+                forward: self.forward.clone(),
+                back: self.back.clone(),
+                hold_modifiers: self.hold_modifiers,
+                reverse: self.reverse,
+                momentum: self.momentum,
+                ..Self::EMPTY
+            }));
+        }
+    }
 
     /// A corner action by editor slot: 0-2 are 1-3 clicks, [`LONG_PRESS_SLOT`] is press and hold.
     pub fn corner_slot(&self, slot: usize) -> ClickSpec {
@@ -282,6 +323,9 @@ pub struct Settings {
     /// Slide-in mode: a finger must first appear this close to the edge.
     pub entry_strip: f64,
     pub sections: IndexMap<String, SectionSettings>,
+    /// Windows: Margin turns itself off while a full-screen app or game is in front.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub off_in_fullscreen: bool,
     /// Per-app sections that replace the ones above while that app is in front (Windows).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<AppProfile>,
@@ -318,6 +362,7 @@ impl Default for Settings {
             corner_size: 0.15,
             entry_strip: 0.04,
             sections: defaults(),
+            off_in_fullscreen: false,
             apps: Vec::new(),
         }
     }
@@ -450,13 +495,22 @@ impl Settings {
         self.edge_depth = self.edge_depth.clamp(0.05, 0.25);
         self.corner_size = self.corner_size.clamp(0.08, 0.30);
         self.entry_strip = self.entry_strip.clamp(0.01, 0.10);
-        for s in Section::ALL {
-            let v = self.section_mut(s);
+        fn tidy(v: &mut SectionSettings, corner: bool) {
             v.clicks.truncate(3);
+            if corner {
+                v.second_half = None; // only edges split
+            } else if let Some(h) = &mut v.second_half {
+                h.second_half = None; // a half doesn't split again
+            }
+        }
+        for s in Section::ALL {
+            tidy(self.section_mut(s), s.is_corner());
         }
         for p in &mut self.apps {
-            for v in p.sections.values_mut() {
-                v.clicks.truncate(3);
+            for s in Section::ALL {
+                if let Some(v) = p.sections.get_mut(s.key()) {
+                    tidy(v, s.is_corner());
+                }
             }
         }
         // a profile without a name could never match an app
@@ -808,6 +862,50 @@ mod tests {
         let back = parse(&serde_json::to_string(&st).unwrap()).unwrap();
         assert!(back.section(Section::Right).reverse);
         assert_eq!(back.section(Section::Right).momentum, Some(false));
+    }
+
+    #[test]
+    fn a_split_edge_round_trips_and_starts_as_a_copy() {
+        let mut st = Settings::default();
+        assert!(!serde_json::to_string(&st).unwrap().contains("secondHalf"), "not split: not written");
+        let left = st.section_mut(Section::Left);
+        left.set_split(true);
+        assert_eq!(left.half(true).slide, SlideAction::Volume, "the new half starts like the edge");
+        left.half_mut(true).slide = SlideAction::Brightness;
+        assert_eq!(left.half(false).slide, SlideAction::Volume);
+        let text = serde_json::to_string_pretty(&st).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["sections"]["left"]["secondHalf"]["slide"], "brightness");
+        let back = parse(&text).unwrap();
+        assert_eq!(back.section(Section::Left).half(true).slide, SlideAction::Brightness);
+        let right = st.section_mut(Section::Right);
+        assert_eq!(right.half(true).slide, SlideAction::Brightness, "not split: both halves are the edge");
+        right.half_mut(true).slide = SlideAction::Zoom;
+        assert_eq!(right.slide, SlideAction::Zoom);
+        st.section_mut(Section::Left).set_split(false);
+        assert_eq!(st.section(Section::Left).half(true).slide, SlideAction::Volume);
+    }
+
+    #[test]
+    fn normalize_drops_splits_that_mean_nothing() {
+        let text = r#"{ "sections": {
+            "topLeft": { "clicks": [ { "do": "lock" } ], "secondHalf": { "slide": "zoom" } },
+            "top": { "slide": "zoom", "secondHalf": { "slide": "seek", "secondHalf": { "slide": "volume" } } } } }"#;
+        let st = parse(text).map(|mut s| { s.normalize(); s }).unwrap();
+        assert!(st.section(Section::TopLeft).second_half.is_none());
+        let top = st.section(Section::Top).second_half.as_ref().unwrap();
+        assert_eq!(top.slide, SlideAction::Seek);
+        assert!(top.second_half.is_none());
+    }
+
+    #[test]
+    fn off_in_fullscreen_is_left_out_until_set() {
+        let mut st = Settings::default();
+        assert!(!serde_json::to_string(&st).unwrap().contains("offInFullscreen"));
+        st.off_in_fullscreen = true;
+        let text = serde_json::to_string(&st).unwrap();
+        assert!(text.contains("\"offInFullscreen\":true"));
+        assert!(parse(&text).unwrap().off_in_fullscreen);
     }
 
     #[test]
