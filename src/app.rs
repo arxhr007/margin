@@ -594,7 +594,8 @@ unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _event: u32, hwnd: HWN
 
 /// Notes whether the window in front is full screen, when the user asked Margin to step aside then.
 fn check_fullscreen() {
-    let wanted = read_settings(|s| s.off_in_fullscreen).unwrap_or(false);
+    // settings busy (a re-entrant message): keep what we know rather than read "off" and flip
+    let Some(wanted) = read_settings(|s| s.off_in_fullscreen) else { return };
     let now = wanted && front_is_fullscreen();
     if FULLSCREEN.with(|f| f.replace(now)) != now {
         let front = FRONT.with(|f| f.borrow().clone()).unwrap_or_default();

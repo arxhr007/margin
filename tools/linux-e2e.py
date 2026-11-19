@@ -94,7 +94,8 @@ def event_node(name):
             continue
         block += line
         if "Handlers=" in line and f'Name="{name}"' in block:
-            for tok in line.split():
+            # "H: Handlers=event2 mouse1": the first handler is glued to "Handlers="
+            for tok in line.split("Handlers=", 1)[1].split():
                 if tok.startswith("event"):
                     return "/dev/input/" + tok
     return None

@@ -53,12 +53,8 @@ fn shell(value: Option<&str>) {
 
 fn open_url(value: Option<&str>) {
     let Some(text) = value.map(str::trim).filter(|v| !v.is_empty()) else { return };
-    let mut target = text.to_string();
-    if !target.contains("://") && !target.contains('/') && target.contains('.') {
-        target = format!("https://{target}");
-    }
     let mut c = Command::new("xdg-open");
-    c.arg(target);
+    c.arg(crate::settings::web_address(text));
     spawn_detached(c);
 }
 
