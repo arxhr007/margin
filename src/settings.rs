@@ -216,6 +216,23 @@ impl ClickSpec {
     }
 }
 
+/// What a corner's "Open a website" value opens. A bare address such as "youtube.com/watch?v=1" or
+/// "example.com:8080" gets "https://" in front; full addresses ("https://...", "mailto:...") and file
+/// paths ("C:\notes.txt", "/home/me/page.html") stay as they are.
+pub fn web_address(value: &str) -> String {
+    let v = value.trim();
+    let host = v.split(['/', '\\', '?', '#']).next().unwrap_or("");
+    let no_scheme = match host.split_once(':') {
+        None => true,
+        Some((_, port)) => !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()),
+    };
+    if host.contains('.') && no_scheme && !v.starts_with(['/', '\\', '.', '~']) {
+        format!("https://{v}")
+    } else {
+        v.to_string()
+    }
+}
+
 /// How many actions a corner editor shows: 1, 2 and 3 clicks, then press and hold.
 pub const CORNER_SLOTS: usize = 4;
 pub const LONG_PRESS_SLOT: usize = 3;
@@ -896,6 +913,25 @@ mod tests {
         let top = st.section(Section::Top).second_half.as_ref().unwrap();
         assert_eq!(top.slide, SlideAction::Seek);
         assert!(top.second_half.is_none());
+    }
+
+    #[test]
+    fn web_addresses_get_https_and_paths_stay() {
+        for (typed, opened) in [
+            ("youtube.com", "https://youtube.com"),
+            ("youtube.com/watch?v=1", "https://youtube.com/watch?v=1"),
+            ("example.com:8080/x", "https://example.com:8080/x"),
+            (" https://example.com ", "https://example.com"),
+            ("mailto:me@example.com", "mailto:me@example.com"),
+            ("ms-settings:display", "ms-settings:display"),
+            ("C:\\notes\\a.txt", "C:\\notes\\a.txt"),
+            ("C:/notes/a.txt", "C:/notes/a.txt"),
+            ("/home/me/page.html", "/home/me/page.html"),
+            ("./page.html", "./page.html"),
+            ("localhost:3000", "localhost:3000"),
+        ] {
+            assert_eq!(web_address(typed), opened, "{typed}");
+        }
     }
 
     #[test]

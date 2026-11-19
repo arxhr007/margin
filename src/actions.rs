@@ -114,11 +114,7 @@ pub fn process_name(hwnd: HWND) -> Option<String> {
 
 fn open_url(value: Option<&str>) {
     let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else { return };
-    let mut target = value.to_string();
-    if !target.contains("://") && !target.contains('\\') && target.contains('.') {
-        target = format!("https://{target}");
-    }
-    shell_open(&expand_env(&target));
+    shell_open(&crate::settings::web_address(&expand_env(value)));
 }
 
 fn run_command(command: Option<&str>) {

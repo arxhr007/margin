@@ -67,7 +67,7 @@ pub fn modifier_code(name: &str) -> Option<u16> {
         "ctrl" | "control" | "cmd" | "command" => Some(CTRL),
         "shift" => Some(SHIFT),
         "alt" | "opt" | "option" => Some(ALT),
-        "win" | "windows" | "super" => Some(WIN),
+        "win" | "windows" | "super" | "meta" => Some(WIN),
         _ => None,
     }
 }
@@ -147,6 +147,7 @@ mod tests {
         assert_eq!(parse_shortcut("cmd+shift+5"), Some((b'5' as u16, vec![CTRL, SHIFT])));
         assert_eq!(parse_shortcut("F11"), Some((0x7A, vec![])));
         assert_eq!(parse_shortcut("Ctrl+PageDown"), Some((0x22, vec![CTRL])));
+        assert_eq!(parse_shortcut("Meta+D"), Some((b'D' as u16, vec![WIN])), "the Linux page accepts Meta");
     }
 
     #[test]

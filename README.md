@@ -167,7 +167,7 @@ Choose **Custom keys…** for an edge to make it send your own shortcuts. (The r
 2. Do the same for the other direction.
 3. Tick **Hold shared modifiers while sliding** for Alt+Tab-style pickers: the modifiers both shortcuts share (Alt) stay down until you lift your finger.
 
-Your system keeps a few combinations to itself (Alt+Tab, anything with the Windows or Super key), so the Record button can't capture them. **Type them in the box instead.** Shortcut text looks like `Ctrl+Shift+Tab`, `Alt+Tab`, `Win+Ctrl+Right` (`Win` is the Super key on Linux), `Ctrl+PageDown` or `F11`.
+Your system keeps a few combinations to itself (Alt+Tab, anything with the Windows or Super key), so the Record button can't capture them. **Type them in the box instead.** Shortcut text looks like `Ctrl+Shift+Tab`, `Alt+Tab`, `Win+Ctrl+Right` (`Win` is the Super key on Linux; `Super` and `Meta` mean the same), `Ctrl+PageDown` or `F11`.
 
 | Preset | Slide right / up | Slide left / down | Hold |
 | --- | --- | --- | --- |
@@ -272,7 +272,7 @@ Settings are saved automatically to `%APPDATA%\Margin\settings.json` on Windows 
 | `sections` | `left`, `right`, `top`, `bottom` (use `slide`) and `topLeft`, `topRight`, `bottomLeft`, `bottomRight` (use `clicks` and `longPress`) |
 | `slide` | `off`, `volume`, `brightness`, `seek`, `zoom`, `tabs`, `tracks`, `desktops`, `custom`, `scroll` |
 | `clicks[].do` | `none`, `mute`, `playPause`, `nextTrack`, `prevTrack`, `screenshot`, `taskView`, `showDesktop`, `lock`, `notifications`, `app`, `url`, `keys`, `command` |
-| `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command` |
+| `clicks[].value` | the app path, address, shortcut or command line for `app`, `url`, `keys` and `command`. An address without `https://`, like `youtube.com/watch?v=...`, gets it added |
 | `longPress` | the action for pressing and holding the corner, with the same `do` and `value` as a click |
 | `needsClick` | in a section: `true` needs the touchpad to click, `false` works by touch (a tap for corners). Left out: edges follow `activation`, corners need a click |
 | `reverse` | in a Scroll edge: `true` scrolls the other way (natural scrolling). Left out: `false` |

@@ -138,7 +138,6 @@ impl RawTouchpad {
         if !self.devices.contains_key(&key) {
             let described = describe(h_device);
             if let Some(d) = &described {
-                tracker.device_has_button = d.has_button;
                 crate::log::info(format!(
                     "touchpad: {} \u{2014} {} contact slots, button={}, contactCount={}",
                     d.name,
@@ -173,6 +172,8 @@ impl RawTouchpad {
             let Some(Some(device)) = self.devices.get_mut(&key) else { return };
             if let Some(committed) = parse_report(device, &mut report) {
                 self.active_device = if committed.0 { key } else { 0 };
+                // with two touchpads (one with a button, one without) the click test follows the one in use
+                tracker.device_has_button = device.has_button;
                 tracker.commit(&committed.1, committed.2);
                 self.log_frame(tracker);
                 after_frame(tracker);
